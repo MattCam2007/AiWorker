@@ -6,7 +6,7 @@ services:
       - "3000:3000"
     volumes:
       - ./config:/app/config
-      - ./workspace:/workspace
+      - /home/matt/Projects:/workspace
     environment:
       - TERMINALDECK_PORT=3000
     restart: unless-stopped
