@@ -63,36 +63,43 @@ class TerminalWSServer {
         return;
       }
 
-      switch (msg.type) {
-        case 'input':
-          pty.write(msg.data);
-          break;
+      try {
+        switch (msg.type) {
+          case 'input':
+            pty.write(msg.data);
+            break;
 
-        case 'resize':
-          if (
-            typeof msg.cols === 'number' && typeof msg.rows === 'number' &&
-            msg.cols > 0 && msg.rows > 0 &&
-            msg.cols <= 500 && msg.rows <= 200
-          ) {
-            pty.resize(msg.cols, msg.rows);
-          }
-          break;
+          case 'resize':
+            if (
+              typeof msg.cols === 'number' && typeof msg.rows === 'number' &&
+              msg.cols > 0 && msg.rows > 0 &&
+              msg.cols <= 500 && msg.rows <= 200
+            ) {
+              pty.resize(msg.cols, msg.rows);
+            }
+            break;
 
-        case 'create_ephemeral': {
-          const session = await this._sessionManager.createEphemeral(msg.name);
-          this._broadcastSessions();
-          break;
-        }
-
-        case 'destroy_ephemeral': {
-          if (!msg.id || !msg.id.startsWith('ephemeral-')) {
-            ws.send(JSON.stringify({ type: 'error', message: 'Can only destroy ephemeral sessions' }));
+          case 'create_ephemeral': {
+            await this._sessionManager.createEphemeral(msg.name);
+            this._broadcastSessions();
             break;
           }
-          await this._sessionManager.destroySession(msg.id);
-          this._broadcastSessions();
-          break;
+
+          case 'destroy_ephemeral': {
+            if (!msg.id || !msg.id.startsWith('ephemeral-')) {
+              ws.send(JSON.stringify({ type: 'error', message: 'Can only destroy ephemeral sessions' }));
+              break;
+            }
+            await this._sessionManager.destroySession(msg.id);
+            this._broadcastSessions();
+            break;
+          }
         }
+      } catch (err) {
+        console.error('WebSocket message handler error:', err);
+        try {
+          ws.send(JSON.stringify({ type: 'error', message: err.message || 'Internal error' }));
+        } catch {}
       }
     });
 
@@ -123,17 +130,6 @@ class TerminalWSServer {
 
   broadcastConfigReload(config) {
     const msg = JSON.stringify({ type: 'config_reload', config });
-    for (const [, terminal] of this._terminals) {
-      for (const ws of terminal.clients) {
-        if (ws.readyState === ws.OPEN) {
-          ws.send(msg);
-        }
-      }
-    }
-  }
-
-  broadcastActivity(id, active) {
-    const msg = JSON.stringify({ type: 'activity', id, active });
     for (const [, terminal] of this._terminals) {
       for (const ws of terminal.clients) {
         if (ws.readyState === ws.OPEN) {

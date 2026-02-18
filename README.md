@@ -131,7 +131,6 @@ Tests use Mocha + Chai. Test files live alongside source files with `.test.js` s
 │   ├── config.js                # Config loader, validator, watcher
 │   ├── sessions.js              # tmux session manager
 │   ├── websocket.js             # WebSocket terminal bridge
-│   ├── activity.js              # Activity tracking (placeholder)
 │   └── *.test.js                # Co-located tests
 ├── client/
 │   ├── index.html               # Dashboard HTML

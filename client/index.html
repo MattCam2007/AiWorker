@@ -4,10 +4,39 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>TerminalDeck</title>
+  <link rel="stylesheet" href="vendor/xterm.css">
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-  <div id="app"></div>
+  <header id="header">
+    <span class="title">TerminalDeck</span>
+    <div id="grid-presets"></div>
+    <div id="named-layouts"></div>
+    <div class="spacer"></div>
+    <button id="add-terminal-btn">+</button>
+    <div id="connection-status" class="status-indicator"></div>
+  </header>
+
+  <main id="grid-container"></main>
+
+  <div id="minimized-strip"></div>
+
+  <div id="fullscreen-overlay" class="hidden">
+    <button class="fullscreen-close"></button>
+    <div class="fullscreen-terminal"></div>
+  </div>
+
+  <div id="ephemeral-dialog" class="hidden">
+    <input class="ephemeral-name" placeholder="Session name">
+    <input class="ephemeral-command" placeholder="Command (optional)">
+    <button class="ephemeral-create">Create</button>
+    <button class="ephemeral-cancel">Cancel</button>
+  </div>
+
+  <script src="vendor/xterm.js"></script>
+  <script src="vendor/xterm-addon-fit.js"></script>
+  <script src="js/terminal.js"></script>
+  <script src="js/layout.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

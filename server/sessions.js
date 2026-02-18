@@ -49,11 +49,21 @@ class SessionManager {
       throw new Error(`No tmux session found for terminal: ${id}`);
     }
 
+    const safeEnv = {
+      TERM: 'xterm-256color',
+      LANG: process.env.LANG || 'en_US.UTF-8',
+      PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin',
+      HOME: process.env.HOME || '/home',
+      SHELL: process.env.SHELL || '/bin/bash',
+      USER: process.env.USER || '',
+      COLORTERM: 'truecolor',
+    };
+
     const ptyProcess = pty.spawn('tmux', ['attach-session', '-t', tmuxName], {
       name: 'xterm-256color',
       cols: 80,
       rows: 24,
-      env: process.env
+      env: safeEnv
     });
 
     return ptyProcess;
@@ -68,12 +78,20 @@ class SessionManager {
   }
 
   async listSessions() {
+    let activeTmuxSessions;
+    try {
+      const { stdout } = await execFileAsync('tmux', ['list-sessions', '-F', '#{session_name}']);
+      activeTmuxSessions = new Set(stdout.trim().split('\n').filter(Boolean));
+    } catch {
+      activeTmuxSessions = new Set();
+    }
+
     const result = [];
     for (const [id, session] of this._sessions) {
       result.push({
         id,
         name: session.name,
-        active: await this._tmuxSessionExists(id),
+        active: activeTmuxSessions.has(this._tmuxSessionName(id)),
         ephemeral: session.ephemeral
       });
     }
@@ -82,9 +100,7 @@ class SessionManager {
 
   async startAll() {
     const autoStartTerminals = this._config.terminals.filter((t) => t.autoStart);
-    for (const terminal of autoStartTerminals) {
-      await this.createSession(terminal);
-    }
+    await Promise.all(autoStartTerminals.map((terminal) => this.createSession(terminal)));
   }
 
   async createEphemeral(name, command) {
@@ -115,18 +131,16 @@ class SessionManager {
     const autoStartTerminals = newConfig.terminals.filter((t) => t.autoStart);
 
     // Remove sessions no longer in config
-    for (const id of oldIds) {
-      if (!allNewIds.has(id)) {
-        await this.destroySession(id);
-      }
-    }
+    await Promise.all(
+      [...oldIds].filter((id) => !allNewIds.has(id)).map((id) => this.destroySession(id))
+    );
 
     // Add new sessions (only autoStart)
-    for (const terminal of autoStartTerminals) {
-      if (!this._sessions.has(terminal.id)) {
-        await this.createSession(terminal);
-      }
-    }
+    await Promise.all(
+      autoStartTerminals
+        .filter((terminal) => !this._sessions.has(terminal.id))
+        .map((terminal) => this.createSession(terminal))
+    );
 
     this._config = newConfig;
   }

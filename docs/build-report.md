@@ -57,7 +57,7 @@
 - Supports multiple simultaneous clients on the same terminal (each gets their own pty attachment to the same tmux session)
 - On disconnect: kills the pty attachment but preserves the tmux session
 - Broadcasts session list updates after ephemeral create/destroy
-- Exposes `broadcastConfigReload(config)` and `broadcastActivity(id, active)` for use by the HTTP server
+- Exposes `broadcastConfigReload(config)` for use by the HTTP server
 
 ### Phase 4: HTTP Server & Static File Serving
 
@@ -77,10 +77,6 @@
 - Config hot-reload: watches file, triggers session manager reload, broadcasts to WebSocket clients
 - Configurable port via `TERMINALDECK_PORT` env var (default 3000)
 - `createApp(options)` factory function for testability (accepts port:0 for random port in tests)
-
-**Also created (placeholders):**
-- `server/activity.js` — Activity tracking (for future phases)
-- `server/activity.test.js` — Activity tests (for future phases)
 
 ---
 
