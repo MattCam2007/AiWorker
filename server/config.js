@@ -75,12 +75,12 @@ class ConfigManager extends EventEmitter {
           const newConfig = this._loadAndValidate();
           this._config = newConfig;
           if (!deepEqual(oldConfig, this._config)) {
-            this.emit('change', this._config);
+            this.emit('change', this._config, oldConfig);
           }
         } catch (err) {
           this.emit('error', err);
         }
-      }, 250);
+      }, 500);
     });
   }
 

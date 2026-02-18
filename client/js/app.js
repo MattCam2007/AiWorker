@@ -58,6 +58,9 @@
       conn._onConfigReload = function (newConfig) {
         self._handleConfigReload(newConfig);
       };
+      conn._onActivityBroadcast = function (msg) {
+        self._handleActivity(msg);
+      };
 
       self._connections[term.id] = conn;
     });
@@ -236,9 +239,76 @@
   };
 
   App.prototype._handleConfigReload = function (newConfig) {
+    var self = this;
+    var oldIds = new Set(Object.keys(this._connections));
+    var newIds = new Set(newConfig.terminals.map(function (t) { return t.id; }));
+
+    // Remove terminals no longer in config (non-ephemeral only)
+    oldIds.forEach(function (id) {
+      if (!newIds.has(id) && !(self._connections[id].config && self._connections[id].config.ephemeral)) {
+        self._connections[id].destroy();
+        if (self._engine) {
+          self._engine._removeFromStrip(id);
+        }
+        delete self._connections[id];
+      }
+    });
+
+    // Add newly configured terminals
+    newConfig.terminals.forEach(function (term) {
+      if (!self._connections[term.id]) {
+        var conn = new ns.TerminalConnection(term.id, {
+          name: term.name,
+          theme: newConfig.settings.theme
+        });
+        conn._onActivity = function (id) { self._onActivity(id); };
+        conn._onStatusChange = function () { self._updateStatus(); };
+        conn._onSessions = function (sessions) { self._handleSessionsUpdate(sessions); };
+        conn._onConfigReload = function (cfg) { self._handleConfigReload(cfg); };
+        conn._onActivityBroadcast = function (msg) { self._handleActivity(msg); };
+        self._connections[term.id] = conn;
+        if (self._engine) {
+          self._engine._addToStrip(term.id, conn);
+        }
+      }
+    });
+
     this._config = newConfig;
     this._applyTheme(newConfig.settings.theme);
     this._buildHeader(newConfig);
+    this._updateStatus();
+  };
+
+  App.prototype._handleActivity = function (activityMsg) {
+    var self = this;
+    var statuses = activityMsg.statuses || {};
+
+    Object.keys(statuses).forEach(function (id) {
+      var active = statuses[id];
+
+      // Update strip status dots
+      if (self._engine && self._engine._stripItems.has(id)) {
+        var entry = self._engine._stripItems.get(id);
+        var dot = entry.element.querySelector('.strip-status');
+        if (dot) {
+          if (active) {
+            dot.classList.add('status-active');
+            dot.classList.remove('status-idle');
+          } else {
+            dot.classList.remove('status-active');
+            dot.classList.add('status-idle');
+          }
+        }
+
+        // Trigger pulse animation on transition to active
+        if (active) {
+          entry.element.classList.add('strip-item-active');
+          setTimeout(function () {
+            entry.element.classList.remove('strip-item-active');
+          }, 600);
+        }
+      }
+    });
   };
 
   App.prototype._onActivity = function (id) {

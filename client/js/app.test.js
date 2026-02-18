@@ -296,6 +296,116 @@ describe('App', function () {
     });
   });
 
+  it('_handleConfigReload() creates connections for newly added terminals', function () {
+    var app = new App();
+    return app.init().then(function () {
+      var newConfig = {
+        settings: testConfig.settings,
+        terminals: [
+          { id: 't1', name: 'Terminal 1', autoStart: true },
+          { id: 't2', name: 'Terminal 2', autoStart: true },
+          { id: 't3', name: 'Terminal 3', autoStart: true }
+        ],
+        layouts: testConfig.layouts
+      };
+
+      app._handleConfigReload(newConfig);
+
+      expect(app._connections.t3).to.exist;
+      expect(app._engine._addToStrip.called).to.be.true;
+    });
+  });
+
+  it('_handleConfigReload() destroys connections for removed terminals', function () {
+    var app = new App();
+    return app.init().then(function () {
+      var newConfig = {
+        settings: testConfig.settings,
+        terminals: [
+          { id: 't1', name: 'Terminal 1', autoStart: true }
+        ],
+        layouts: {
+          dev: { grid: '1x1', cells: [['t1']] },
+          focus: { grid: '1x1', cells: [['t1']] }
+        }
+      };
+
+      app._handleConfigReload(newConfig);
+
+      expect(app._connections.t2).to.not.exist;
+    });
+  });
+
+  it('_handleConfigReload() applies updated theme', function () {
+    var app = new App();
+    return app.init().then(function () {
+      var newConfig = {
+        settings: {
+          ...testConfig.settings,
+          theme: {
+            defaultColor: '#ff0000',
+            background: '#111111',
+            fontFamily: 'monospace',
+            fontSize: 16
+          }
+        },
+        terminals: testConfig.terminals,
+        layouts: testConfig.layouts
+      };
+
+      app._handleConfigReload(newConfig);
+
+      var root = document.documentElement;
+      expect(root.style.getPropertyValue('--td-color')).to.equal('#ff0000');
+      expect(root.style.getPropertyValue('--td-bg')).to.equal('#111111');
+    });
+  });
+
+  it('_handleConfigReload() rebuilds named layout buttons', function () {
+    var app = new App();
+    return app.init().then(function () {
+      var newConfig = {
+        settings: testConfig.settings,
+        terminals: testConfig.terminals,
+        layouts: {
+          newlayout: { grid: '1x1', cells: [['t1']] }
+        }
+      };
+
+      app._handleConfigReload(newConfig);
+
+      var btns = document.querySelectorAll('#named-layouts .layout-btn');
+      expect(btns.length).to.equal(1);
+      expect(btns[0].textContent).to.equal('newlayout');
+    });
+  });
+
+  it('_handleActivity() updates strip status dot and triggers pulse', function () {
+    var app = new App();
+    return app.init().then(function () {
+      // Put t1 in strip by adding it manually
+      app._engine._stripItems.set('t1', {
+        element: (function () {
+          var el = document.createElement('div');
+          el.className = 'strip-item';
+          var dot = document.createElement('span');
+          dot.className = 'strip-status';
+          el.appendChild(dot);
+          return el;
+        })()
+      });
+
+      var activityMsg = {
+        statuses: { t1: true, t2: false }
+      };
+
+      app._handleActivity(activityMsg);
+
+      var dot = app._engine._stripItems.get('t1').element.querySelector('.strip-status');
+      expect(dot.classList.contains('status-active')).to.be.true;
+    });
+  });
+
   it('connection status reflects aggregate state', function () {
     var app = new App();
     return app.init().then(function () {

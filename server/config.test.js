@@ -173,6 +173,36 @@ describe('ConfigManager', () => {
       }, 100);
     });
 
+    it('debounces rapid file changes into a single reload', (done) => {
+      writeConfig(validConfig);
+      const mgr = new ConfigManager(configPath);
+      mgr.load();
+      mgr.watch();
+
+      let changeCount = 0;
+      mgr.on('change', () => {
+        changeCount++;
+      });
+
+      // Write multiple rapid changes
+      const updated = {
+        settings: validConfig.settings,
+        terminals: [{ id: 'shell1', name: 'Shell', workingDir: '/tmp' }],
+        layouts: { dev: { grid: '1x1', cells: [['shell1']] } }
+      };
+
+      setTimeout(() => { writeConfig(updated); }, 50);
+      setTimeout(() => { writeConfig(updated); }, 100);
+      setTimeout(() => { writeConfig(updated); }, 150);
+
+      // After debounce period (500ms + buffer), should have only emitted once
+      setTimeout(() => {
+        expect(changeCount).to.equal(1);
+        mgr.stopWatching();
+        done();
+      }, 1200);
+    });
+
     it('emits "error" on invalid config change but retains last valid', (done) => {
       writeConfig(validConfig);
       const mgr = new ConfigManager(configPath);

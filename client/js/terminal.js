@@ -29,6 +29,7 @@
     this._onStatusChange = null;
     this._onSessions = null;
     this._onConfigReload = null;
+    this._onActivityBroadcast = null;
   }
 
   TerminalConnection.prototype.attach = function (el) {
@@ -107,6 +108,10 @@
 
         case 'config_reload':
           if (self._onConfigReload) self._onConfigReload(msg.config);
+          break;
+
+        case 'activity':
+          if (self._onActivityBroadcast) self._onActivityBroadcast(msg);
           break;
       }
     });

@@ -83,12 +83,16 @@ async function createApp(options = {}) {
   });
 
   const wsServer = new TerminalWSServer(server, sessionManager);
+  wsServer.startActivityBroadcasting();
 
   // Config hot-reload
   configManager.watch();
   configManager.on('change', async (newConfig) => {
     await sessionManager.handleConfigReload(newConfig);
     wsServer.broadcastConfigReload(newConfig);
+  });
+  configManager.on('error', (err) => {
+    console.error('Config error (retaining last valid config):', err.message);
   });
 
   const actualPort = await new Promise((resolve) => {

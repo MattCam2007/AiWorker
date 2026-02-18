@@ -1,10 +1,12 @@
 const { WebSocketServer } = require('ws');
+const { ActivityTracker } = require('./activity');
 
 class TerminalWSServer {
   constructor(httpServer, sessionManager) {
     this._sessionManager = sessionManager;
     // terminalId -> { pty, clients: Set<ws> }
     this._terminals = new Map();
+    this._activity = new ActivityTracker();
 
     this._wss = new WebSocketServer({ noServer: true });
 
@@ -42,6 +44,7 @@ class TerminalWSServer {
 
       // Set up pty output broadcast ONCE when pty is created
       pty.onData((data) => {
+        this._activity.recordOutput(terminalId);
         const msg = JSON.stringify({ type: 'output', data });
         for (const client of terminal.clients) {
           if (client.readyState === client.OPEN) {
@@ -139,7 +142,29 @@ class TerminalWSServer {
     }
   }
 
+  startActivityBroadcasting() {
+    this._activity.startBroadcasting((msg) => {
+      this._broadcastToAll(msg);
+    });
+  }
+
+  stopActivityBroadcasting() {
+    this._activity.stopBroadcasting();
+  }
+
+  _broadcastToAll(msg) {
+    const data = JSON.stringify(msg);
+    for (const [, terminal] of this._terminals) {
+      for (const ws of terminal.clients) {
+        if (ws.readyState === ws.OPEN) {
+          ws.send(data);
+        }
+      }
+    }
+  }
+
   closeAll() {
+    this._activity.stopBroadcasting();
     for (const [, terminal] of this._terminals) {
       for (const ws of terminal.clients) {
         ws.close(1001, 'Server shutting down');

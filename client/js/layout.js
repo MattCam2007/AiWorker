@@ -286,6 +286,7 @@
 
     // Close on outside click
     setTimeout(function () {
+      if (typeof document === 'undefined') return;
       document.addEventListener(
         'click',
         function closePopover(e) {

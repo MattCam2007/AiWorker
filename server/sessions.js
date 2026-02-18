@@ -131,16 +131,18 @@ class SessionManager {
     const autoStartTerminals = newConfig.terminals.filter((t) => t.autoStart);
 
     // Remove sessions no longer in config
-    await Promise.all(
-      [...oldIds].filter((id) => !allNewIds.has(id)).map((id) => this.destroySession(id))
-    );
+    const toRemove = [...oldIds].filter((id) => !allNewIds.has(id));
+    for (const id of toRemove) {
+      console.log(`Config reload: Terminal '${id}' removed`);
+    }
+    await Promise.all(toRemove.map((id) => this.destroySession(id)));
 
     // Add new sessions (only autoStart)
-    await Promise.all(
-      autoStartTerminals
-        .filter((terminal) => !this._sessions.has(terminal.id))
-        .map((terminal) => this.createSession(terminal))
-    );
+    const toAdd = autoStartTerminals.filter((terminal) => !this._sessions.has(terminal.id));
+    for (const terminal of toAdd) {
+      console.log(`Config reload: Terminal '${terminal.id}' added`);
+    }
+    await Promise.all(toAdd.map((terminal) => this.createSession(terminal)));
 
     this._config = newConfig;
   }

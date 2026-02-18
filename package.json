@@ -5,7 +5,9 @@
   "main": "server/index.js",
   "scripts": {
     "start": "node server/index.js",
-    "test": "mocha --recursive 'server/**/*.test.js' 'client/**/*.test.js' --exit"
+    "test": "mocha --recursive 'server/**/*.test.js' 'client/**/*.test.js' --exit",
+    "test:integration": "mocha 'test/**/*.test.js' --exit --timeout 30000",
+    "test:all": "mocha --recursive 'server/**/*.test.js' 'client/**/*.test.js' 'test/**/*.test.js' --exit --timeout 30000"
   },
   "dependencies": {
     "node-pty": "1.1.0",

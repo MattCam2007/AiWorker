@@ -1,3 +1,4 @@
+version: '3.8'
 services:
   terminaldeck:
     build: .
@@ -5,7 +6,7 @@ services:
       - "3000:3000"
     volumes:
       - ./config:/app/config
-      # Mount your project directory to /workspace for terminal access
-      - .:/workspace
+      - ./workspace:/workspace
     environment:
       - TERMINALDECK_PORT=3000
+    restart: unless-stopped

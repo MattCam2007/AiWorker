@@ -1,7 +1,7 @@
-# TerminalDeck Build Report — Phases 1-7
+# TerminalDeck Build Report — Phases 1-10
 
 **Date:** 2026-02-18
-**Status:** All 7 phases complete, 99/99 tests passing (43 backend + 56 frontend)
+**Status:** All 10 phases complete, 130/130 tests passing (61 backend + 61 frontend + 8 integration)
 
 ---
 
@@ -177,22 +177,182 @@
 - `client/vendor/xterm.css` — xterm.js v5.3.0 stylesheet from jsdelivr (5.4 KB)
 - `client/vendor/xterm-addon-fit.js` — xterm-addon-fit v0.8.0 UMD bundle from jsdelivr (1.5 KB, exposes `window.FitAddon.FitAddon`)
 
+### Phase 8: Hot Reload & Activity Monitoring
+
+**Files created:**
+- `server/config-diff.js` — Config diff engine (55 lines)
+- `server/config-diff.test.js` — 8 tests
+- `server/activity.js` — Terminal activity tracker (50 lines)
+- `server/activity.test.js` — 9 tests
+
+**Files modified:**
+- `server/config.js` — Debounce increased from 250ms to 500ms; `change` event now also passes old config
+- `server/sessions.js` — Added logging to `handleConfigReload()` (logs "Terminal 'X' added/removed" for each change)
+- `server/websocket.js` — Integrated ActivityTracker; added `startActivityBroadcasting()`, `stopActivityBroadcasting()`, `_broadcastToAll()` methods; activity recorded on every pty output event
+- `server/index.js` — Starts activity broadcasting on server launch; added `configManager.on('error')` listener to prevent uncaught error crashes
+- `client/js/app.js` — Enhanced `_handleConfigReload()` to add/remove terminal connections (not just theme/header); added `_handleActivity()` method for server activity broadcasts; wired `_onActivityBroadcast` callback on all connections
+- `client/js/terminal.js` — Added `activity` message type handling via new `_onActivityBroadcast` callback hook
+- `client/js/layout.js` — Fixed pre-existing timer leak in `_showCellPopover()` where `setTimeout` fired after jsdom teardown (added `typeof document` guard)
+- `client/css/style.css` — Changed `.strip-status` default from green to `--td-text-dim` (gray); added `.status-active` class (green glow) and `.status-idle` class (gray); added transitions
+- `server/config.test.js` — Added debounce test (rapid file changes result in single reload)
+- `client/js/app.test.js` — Added 5 new tests for config reload add/remove/theme/layout and activity handling
+
+**Config diff engine (`config-diff.js`) capabilities:**
+- `computeConfigDiff(oldConfig, newConfig)` — Returns a structured diff:
+  - `addedTerminals` — Terminal config objects present in new but not old
+  - `removedTerminals` — Terminal IDs present in old but not new
+  - `modifiedTerminals` — Terminal IDs with same ID but changed properties
+  - `layoutsChanged` — Boolean, true if layouts object differs
+  - `themeChanged` — Boolean, true if theme settings differ
+  - `settingsChanged` — Boolean, true if any settings differ
+- Uses a local `deepEqual()` for recursive structural comparison
+
+**Activity tracker (`activity.js`) capabilities:**
+- `recordOutput(terminalId)` — Records current timestamp for a terminal
+- `isActive(terminalId)` — Returns true if output was received within the last 3 seconds (configurable `ACTIVE_THRESHOLD_MS = 3000`)
+- `getStatuses()` — Returns `{ terminalId: boolean }` map of all tracked terminals
+- `removeTerminal(terminalId)` — Removes a terminal from tracking
+- `startBroadcasting(broadcastFn)` — Starts a 2-second interval (`BROADCAST_INTERVAL_MS = 2000`) that calls `broadcastFn({ type: 'activity', statuses: {...} })`
+- `stopBroadcasting()` — Clears the interval
+
+**Frontend hot reload (`app.js` `_handleConfigReload`) capabilities:**
+- Detects terminals removed from config, calls `destroy()` on their connections, removes from layout engine strip
+- Detects terminals added to config, creates new `TerminalConnection` with full callback wiring, adds to minimized strip
+- Preserves ephemeral terminals (only removes non-ephemeral connections that are gone from config)
+- Re-applies theme via CSS custom properties
+- Rebuilds header layout buttons
+- Updates connection status indicator
+
+**Frontend activity handling (`app.js` `_handleActivity`) capabilities:**
+- On receiving `{ type: 'activity', statuses: {...} }` message from server:
+  - Updates `.strip-status` dot CSS classes: `status-active` (green) or `status-idle` (gray)
+  - Triggers `strip-item-active` pulse animation on active minimized terminals
+
+**Key design decisions:**
+- **Separate `_onActivityBroadcast` callback:** The server's periodic activity broadcast is handled differently from per-terminal `_onActivity` (which fires on every output chunk). The broadcast provides a consolidated view of all terminals; the per-terminal callback provides instant feedback for the specific terminal producing output.
+- **500ms debounce:** Editors like vim write temp files, rename, etc. on save — generating multiple `fs.watch` events. 500ms captures a complete save cycle without feeling laggy to the user.
+- **Activity threshold of 3 seconds:** Short enough to be responsive (a terminal appears "idle" quickly after output stops), long enough that brief pauses between lines of output don't cause flickering.
+
+### Phase 9: Docker & Deployment
+
+**Files modified:**
+- `Dockerfile` — Rewritten from `node:22-bookworm-slim` base to `debian:bookworm-slim` base (36 lines)
+- `docker-compose.yml` — Added version field, workspace volume, restart policy (12 lines)
+- `package.json` — Added `test:integration` and `test:all` scripts
+
+**Dockerfile changes:**
+- Base image: `debian:bookworm-slim` (previously `node:22-bookworm-slim`)
+- Node.js installed via nodesource `setup_20.x` script (Node 20 LTS, previously Node 22 from base image)
+- Added system packages: `git`, `curl`, `procps` (previously only `tmux` and `bash`)
+- Added `npm install --production` (previously `npm ci --omit=dev`)
+- Added `mkdir -p /workspace` for default workspace directory
+- Copies `server/`, `client/`, `config/` directories (unchanged)
+- Exposes port 3000, starts via `node server/index.js` (unchanged)
+
+**docker-compose.yml changes:**
+- Added `version: '3.8'` field
+- Changed workspace volume from `.:/workspace` (whole project) to `./workspace:/workspace` (dedicated workspace directory)
+- Added `restart: unless-stopped` policy
+
+**package.json script additions:**
+- `test:integration` — Runs only `test/**/*.test.js` with 30s timeout
+- `test:all` — Runs all test globs (server + client + integration) with 30s timeout
+
+### Phase 10: Integration Testing & Polish
+
+**Files created:**
+- `test/integration.test.js` — Full-stack integration tests (337 lines, 8 tests)
+
+**Files modified:**
+- `README.md` — Complete rewrite with expanded documentation (283 lines)
+
+**Integration test capabilities:**
+
+Each test spins up a real server instance (random port, temp config file, real tmux sessions) and tears it down afterwards. All tests share helper functions:
+- `httpGet(port, path)` — HTTP GET request returning `{ status, headers, body }`
+- `connectWS(port, terminalId)` — Opens WebSocket, resolves on `open`
+- `waitForMessage(ws, type, timeout)` — Resolves when a message of the given type arrives
+- `collectOutput(ws, durationMs)` — Collects all `output` messages for a duration
+
+**Test scenarios:**
+
+1. **Full startup flow** — Server starts → config loads → tmux sessions created for all `autoStart` terminals → HTTP serves the dashboard page → `/api/config` returns correct data → `/api/sessions` returns 2 auto-started sessions
+
+2. **Terminal connectivity** — WebSocket connects to a terminal → sends `echo hello_integration_test\n` → collects output for 2 seconds → verifies output contains "hello_integration_test"
+
+3. **Multi-client** — Two WebSocket clients connect to the same terminal → client A sends `echo multiclient_test_42\n` → client B's collected output contains "multiclient_test_42"
+
+4. **Session persistence** — Connect → set environment variable `PERSIST_VAR=alive_12345` → disconnect WebSocket → wait for cleanup → reconnect → send `echo $PERSIST_VAR\n` → output contains "alive_12345" (proves tmux session survived disconnect)
+
+5. **Ephemeral lifecycle** — Create ephemeral terminal via WebSocket message → receive `sessions` broadcast → verify ephemeral session exists with correct name → verify it appears in `/api/sessions` → destroy it via WebSocket → receive updated `sessions` broadcast → verify it's gone from both broadcast and API
+
+6. **Hot reload — add terminal** — Write new config with additional terminal to file → receive `config_reload` WebSocket message → verify new config has 3 terminals → verify `/api/sessions` shows new session was created
+
+7. **Hot reload — remove terminal** — Write new config with terminal removed → receive `config_reload` message → verify config has 1 terminal → verify `/api/sessions` confirms session was destroyed
+
+8. **Config validation** — Write invalid JSON to config file → wait for debounce → server still running → `/api/config` still returns last valid config with 2 terminals
+
+**Bug fixes during Phase 10:**
+
+1. **Uncaught `error` event on ConfigManager** — When invalid JSON was written to the config file, `ConfigManager` emitted an `error` event. Node's `EventEmitter` throws if `error` is emitted with no listener, crashing the server. Fixed by adding `configManager.on('error', ...)` handler in `index.js` that logs the error message.
+
+2. **WebSocket `sessions` message race condition in tests** — The `waitForMessage` listener was set up *after* sending the `create_ephemeral` message, so the `sessions` response could arrive before the listener was registered. Fixed by setting up the listener *before* sending the message.
+
+3. **Popover timer leak in layout tests** — The `_showCellPopover()` method uses `setTimeout(fn, 0)` to register an outside-click listener. In tests, this timer fired after the jsdom globals were torn down, causing `ReferenceError: document is not defined`. Fixed by guarding with `if (typeof document === 'undefined') return;`.
+
+**Polish checklist results:**
+
+| Item | Status |
+|------|--------|
+| All tests pass (unit + integration) | 130/130 passing |
+| Config hot reload works end-to-end | Verified via integration tests |
+| Activity tracker broadcasts statuses | Verified: 2s interval, 3s threshold |
+| Activity dots update on strip items | CSS classes wired: `status-active` / `status-idle` |
+| Activity pulse animation on minimized terminals | `strip-item-active` class with 0.6s animation |
+| Ephemeral terminal create/destroy end-to-end | Verified via integration test |
+| Theme changes apply without page reload | CSS custom properties updated dynamically |
+| Config reload adds/removes terminal connections | Frontend creates/destroys connections on reload |
+| Session persistence across disconnects | Verified: env var survives WS disconnect/reconnect |
+| Multi-client terminal sharing | Verified: client A input visible to client B |
+| Invalid config doesn't crash server | Server retains last valid config, logs error |
+| Debounce prevents duplicate reloads | Verified: rapid writes trigger single `change` event |
+| Docker container spec matches requirements | Debian bookworm-slim + Node 20 + tmux/bash/git/curl/procps |
+
+**README updates:**
+- Added Hot Reload section explaining the 4-step reload process
+- Added Activity Monitoring section
+- Added Ephemeral Terminals section
+- Added Settings reference table (all theme fields, shell, defaultLayout)
+- Added Layouts reference with all 8 presets
+- Added Architecture diagram (ASCII box diagram: Browser → Server → tmux)
+- Added Troubleshooting section (5 common issues with solutions)
+- Added `test:integration` and `test:all` commands to Testing section
+- Updated Project Structure with new files (config-diff.js, activity.js, integration.test.js)
+- Updated WebSocket Protocol to show correct `activity` message format (statuses object, not per-terminal)
+- Updated Current Status to reflect 130/130 tests, all 10 phases complete
+
 ---
 
 ## Test Summary
 
 | Module | File | Tests | Status |
 |--------|------|-------|--------|
-| Config | `server/config.test.js` | 11 | Passing |
+| Activity Tracker | `server/activity.test.js` | 9 | Passing |
+| Config Diff | `server/config-diff.test.js` | 8 | Passing |
+| Config | `server/config.test.js` | 12 | Passing |
+| HTTP Server | `server/index.test.js` | 9 | Passing |
 | Sessions | `server/sessions.test.js` | 9 | Passing |
-| WebSocket | `server/websocket.test.js` | 11 | Passing |
-| HTTP Server | `server/index.test.js` | 12 | Passing |
-| Terminal | `client/js/terminal.test.js` | 18 | Passing |
+| WebSocket | `server/websocket.test.js` | 14 | Passing |
+| App | `client/js/app.test.js` | 20 | Passing |
 | Layout | `client/js/layout.test.js` | 23 | Passing |
-| App | `client/js/app.test.js` | 15 | Passing |
-| **Total** | | **99** | **All passing** |
+| Terminal | `client/js/terminal.test.js` | 18 | Passing |
+| Integration | `test/integration.test.js` | 8 | Passing |
+| **Total** | | **130** | **All passing** |
 
-Run with: `npm test`
+Run with:
+- `npm test` — Unit tests only (server + client)
+- `npm run test:integration` — Integration tests only
+- `npm run test:all` — All tests
 
 ---
 
@@ -234,18 +394,35 @@ The app.js IIFE registers a `DOMContentLoaded` listener that auto-creates an App
 
 **Fix:** Added an `ns._noAutoInit` flag check to the DOMContentLoaded registration in app.js. The test sets `window.TerminalDeck._noAutoInit = true` before requiring the module, preventing the auto-init from interfering. This flag has no effect in production since it's never set by the HTML page.
 
+### Phases 8-10
+
+#### 8. Uncaught EventEmitter `error` event crashing the server
+When the config watcher detected invalid JSON, it emitted an `error` event on the `ConfigManager` (an `EventEmitter` subclass). Node.js throws if an `error` event is emitted with no listeners — this crashed the server process. The unit tests didn't catch this because each test adds its own `on('error', ...)` handler. The integration test exposed it by writing invalid JSON to a real watched config file.
+
+**Fix:** Added `configManager.on('error', (err) => console.error(...))` in `index.js` immediately after calling `configManager.watch()`.
+
+#### 9. WebSocket `sessions` message arriving before listener in integration tests
+The ephemeral lifecycle integration test sent a `create_ephemeral` message and then called `waitForMessage(ws, 'sessions')`. But the server processed the create and broadcast the `sessions` message before the `waitForMessage` listener was registered — the message arrived during the synchronous gap between `ws.send()` and the listener setup. This caused a 5-second timeout.
+
+**Fix:** Set up the `waitForMessage` listener *before* calling `ws.send()`, ensuring the listener is in place before the response can arrive.
+
+#### 10. jsdom teardown race condition in layout popover
+The `_showCellPopover()` method schedules `setTimeout(fn, 0)` to register a click-away listener on `document`. In the test environment, jsdom globals (`document`, `window`) are deleted in `afterEach`. If the test completes before the timeout fires, the callback references `document` which no longer exists, causing `ReferenceError: document is not defined` and a "done() called multiple times" error from Mocha.
+
+**Fix:** Added `if (typeof document === 'undefined') return;` guard at the start of the timeout callback. This is safe because the popover no longer exists after teardown anyway.
+
 ---
 
 ## Potential Future Problems
 
 ### Security
-- **Command injection in session creation:** The `execSync()` calls in `sessions.js` interpolate terminal IDs and commands directly into shell strings. If config is user-editable (it's a mounted volume), a malicious `id` or `command` value could inject shell commands. Consider using `execFile` or an argument-array form instead.
+- **Config file is user-editable:** The config file is on a mounted volume. While `sessions.js` uses `execFile` with argument arrays (not shell interpolation), a malicious `command` value in config could still run arbitrary code — which is by design since the purpose is to run commands in terminals.
 - **No authentication:** The HTTP and WebSocket servers have no authentication. Anyone with network access to port 3000 gets full terminal access. Critical for Docker deployments that expose ports.
 - **No HTTPS/WSS:** All traffic is unencrypted. Terminal I/O (including passwords typed into shells) travels in plaintext.
 
 ### Stability
-- **`fs.watch` reliability:** `fs.watch` behavior varies across platforms and filesystems (especially in Docker with mounted volumes). It may fire duplicate events, miss events, or behave differently on NFS/CIFS mounts. The 50ms debounce helps but doesn't fully solve this.
-- **Synchronous `execSync` in sessions:** All tmux operations use `execSync`, which blocks the Node.js event loop. Under heavy load with many session operations, this could cause latency spikes. Consider switching to async `exec` or `child_process.spawn`.
+- **`fs.watch` reliability:** `fs.watch` behavior varies across platforms and filesystems (especially in Docker with mounted volumes). It may fire duplicate events, miss events, or behave differently on NFS/CIFS mounts. The 500ms debounce helps but doesn't fully solve this.
+- **tmux operations use `execFileAsync`:** All tmux operations use promisified `execFile`, which is non-blocking. However, heavy concurrent session creation/destruction could still cause contention.
 - **node-pty per WebSocket client:** Each WebSocket connection spawns a new pty process attached to the same tmux session. With many simultaneous clients, this could exhaust file descriptors or process limits. Consider sharing a single pty per terminal and multiplexing output to multiple WebSocket clients.
 
 ### Docker
@@ -260,10 +437,15 @@ The app.js IIFE registers a `DOMContentLoaded` listener that auto-creates an App
 - **No touch/drag support for swap:** The swap interaction requires click on strip then click on cell. Mobile users may expect drag-and-drop. The current implementation relies on tap-based interaction only.
 - **ResizeObserver not available in all environments:** The layout engine gracefully skips ResizeObserver setup when unavailable (e.g., in Node.js test environment), but this means tests don't verify auto-refit on container resize.
 
+### Activity Monitoring
+- **Activity broadcast interval is not configurable:** The 2-second broadcast and 3-second threshold are hardcoded constants. A busy server with many terminals could generate significant broadcast traffic. Consider making these configurable via settings.
+- **Activity tracker grows unbounded:** The `_lastOutput` map never removes terminals unless `removeTerminal()` is explicitly called. Long-running servers with many created/destroyed ephemeral terminals could accumulate stale entries. The memory impact is negligible (just a timestamp per ID), but the broadcast would include inactive entries.
+- **Activity status dot CSS classes only apply to strip items:** Grid cell headers don't receive activity status updates. The spec mentions updating status dots "in the terminal's title bar area" for grid terminals, which is not yet implemented.
+
 ### Testing
 - **Session tests depend on real tmux:** Tests require a running tmux-capable environment (not available in many CI systems). Consider adding a CI-specific test configuration or mocking tmux for unit tests.
-- **No test for graceful shutdown:** The server doesn't have a SIGTERM handler to cleanly shut down tmux sessions on process exit. Orphaned tmux sessions could accumulate.
-- **Ephemeral session ID collision:** `Date.now()` for ephemeral IDs could collide if two are created in the same millisecond. Low probability but worth noting.
+- **Graceful shutdown doesn't destroy tmux sessions:** The SIGTERM/SIGINT handler in `index.js` closes WebSocket connections and stops the HTTP server, but does not kill tmux sessions. This is intentional (sessions persist for reconnection), but means orphaned sessions accumulate if the server never restarts with the same config.
+- **Ephemeral session ID collision:** Uses `crypto.randomUUID()` for ephemeral IDs, so collision probability is negligible.
 - **Frontend tests use jsdom, not a real browser:** jsdom doesn't implement CSS Grid layout, ResizeObserver, or WebGL. Tests verify DOM structure and method calls but can't validate visual rendering, actual terminal display, or responsive layout behavior. Manual browser testing is required for visual verification.
 
 ---
@@ -285,7 +467,7 @@ The app.js IIFE registers a `DOMContentLoaded` listener that auto-creates an App
 | xterm.css | 5.3.0 | Terminal emulator styles |
 | xterm-addon-fit | 0.8.0 | Auto-fit terminal to container |
 
-**System requirements:** Node.js 22+, tmux 3.x, bash
+**System requirements:** Node.js 20+ (LTS), tmux 3.x, bash
 
 ---
 
@@ -300,19 +482,23 @@ Browser
 +-------------------+
 | server/index.js   |  HTTP server, static files, API routes
 +-------------------+
-    |           |
-    v           v
-+----------+ +----------------+
-| config.js| | websocket.js   |  WebSocket upgrade handler
-+----------+ +----------------+
-    |               |
-    |          (attaches per client)
-    v               v
-+-------------------+
-| sessions.js       |  tmux session lifecycle
-+-------------------+
+    |           |           |
+    v           v           v
++----------+ +----------------+ +---------------+
+| config.js| | websocket.js   | | activity.js   |
++----------+ +----------------+ +---------------+
+    |               |               |
+    v               |          (2s broadcast)
++---------------+   |               |
+| config-diff.js|   |          (records pty output)
++---------------+   |               |
+    |          (attaches per client) |
+    v               v               v
++-------------------------------------------+
+| sessions.js       tmux session lifecycle  |
++-------------------------------------------+
     |
-    | execSync / node-pty
+    | execFileAsync / node-pty
     v
 +-------------------+
 | tmux              |  Persistent terminal sessions
@@ -330,7 +516,8 @@ Browser Frontend
 |  +-----------+  +------------+  +-----------------+  |
 |       |              |                |               |
 |  fetch /api/config   | CSS Grid       | xterm.js      |
-|                      | management     | + WebSocket   |
+|  config_reload msg   | management     | + WebSocket   |
+|  activity msg        |                |               |
 +------------------------------------------------------+
 |  vendor/xterm.js  |  vendor/xterm-addon-fit.js       |
 +------------------------------------------------------+
