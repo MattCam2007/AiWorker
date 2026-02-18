@@ -1,7 +1,7 @@
-# TerminalDeck Build Report — Foundation (Phases 1-4)
+# TerminalDeck Build Report — Phases 1-7
 
 **Date:** 2026-02-18
-**Status:** All 4 phases complete, 36/36 tests passing
+**Status:** All 7 phases complete, 99/99 tests passing (43 backend + 56 frontend)
 
 ---
 
@@ -78,6 +78,105 @@
 - Configurable port via `TERMINALDECK_PORT` env var (default 3000)
 - `createApp(options)` factory function for testability (accepts port:0 for random port in tests)
 
+### Phase 5: Terminal Rendering
+
+**Files created:**
+- `client/js/test-helpers.js` — Shared mock classes for frontend tests (72 lines)
+- `client/js/terminal.js` — Terminal connection manager (161 lines, rewritten from placeholder)
+- `client/js/terminal.test.js` — 18 tests
+
+**Test helpers (`test-helpers.js`):**
+- **MockTerminal** — Stubs for xterm.js Terminal API: `open()`, `write()`, `onData()`, `loadAddon()`, `dispose()`, all backed by sinon stubs. Tracks `_onDataCallbacks` for simulating user input.
+- **MockFitAddon** — Stubs for `fit()` and `proposeDimensions()` returning `{cols: 80, rows: 24}`
+- **MockWebSocket** — Tracks `url`, `_sent[]` (outgoing messages), exposes `_receive(msg)` for simulating server messages. Auto-opens via `setTimeout`. Implements `addEventListener`/`removeEventListener`, readyState constants.
+
+**TerminalConnection capabilities:**
+- IIFE pattern attaching `TerminalConnection` to `window.TerminalDeck` namespace
+- `attach(el)` — Creates fresh xterm.js Terminal with theme settings (fontFamily, fontSize, foreground, background), loads FitAddon, opens terminal in element, fits, and connects WebSocket
+- `_connectWS()` — Opens WebSocket to `ws[s]://host/ws/terminal/{id}`, sends resize on open, handles `output` (writes to xterm), `sessions`, and `config_reload` message types
+- `detach()` — Disposes xterm Terminal, closes WebSocket, clears timers. Sets `_detaching` flag to suppress reconnection
+- `refit()` — Calls `fitAddon.fit()` and sends a resize message with new dimensions
+- `isActive()` — Returns true when WebSocket is OPEN
+- `getLastOutput()` — Returns last ~80 chars of output with ANSI escape codes stripped
+- `destroy()` — Sets `_destroyed` flag, calls `detach()`, prevents all future reconnection
+- `_scheduleReconnect()` — Exponential backoff: base 1s, doubling up to 30s cap, with ±20% random jitter
+- Callback hooks: `_onActivity`, `_onStatusChange`, `_onSessions`, `_onConfigReload` (wired by App)
+
+**Key design decision — re-create on re-attach:** xterm.js `Terminal.open()` can only be called once per instance. So `attach()` always creates a fresh Terminal + FitAddon + WebSocket, and `detach()` disposes everything. Since tmux preserves all state server-side and replays output on reconnect, this is seamless.
+
+### Phase 6: Layout Engine
+
+**Files created:**
+- `client/js/layout.js` — Grid layout engine (283 lines, rewritten from placeholder)
+- `client/js/layout.test.js` — 23 tests
+
+**LayoutEngine capabilities:**
+- IIFE pattern attaching `LayoutEngine` to `window.TerminalDeck` namespace
+- **8 grid presets** (format is CxR where C=columns, R=rows): 1x1, 2x1, 1x2, 2x2, 2x3, 3x2, 3x1, 1x3
+- `setGrid(spec)` — Sets `grid-template-columns`/`grid-template-rows` using `repeat(N, 1fr)`. Creates N cell divs each with `.cell-header` (hidden initially) and `.cell-terminal` mount point. Detaches current occupants to minimized strip before rebuilding.
+- `applyLayout(layoutConfig, connections)` — Calls `setGrid()`, iterates `layoutConfig.cells` (2D array of IDs), assigns terminals to cells in order, puts remainder in strip, then `requestAnimationFrame(() => refitAll())`
+- `assignTerminal(cell, terminalId, connection)` — Calls `connection.attach()` on cell's `.cell-terminal` mount, shows cell header with terminal name, removes from strip if present
+- **Swap interaction:** Strip item click sets `_swapSource` with highlight. Clicking again deselects. Grid cell click with source detaches occupant to strip, assigns source to cell, refits. Empty cell click with source places the terminal directly.
+- **Popover:** Empty cell click without selection shows a popover listing minimized terminals. Clicking a popover item assigns that terminal to the cell. Closes on outside click.
+- `enterFullscreen(terminalId, connection)` — Detaches from grid cell, shows `#fullscreen-overlay`, attaches to fullscreen container, refits
+- `exitFullscreen()` — Hides overlay, re-attaches to original grid cell, refits
+- Escape key listener calls `exitFullscreen()`
+- `refitAll()` — Iterates all cells, calls `refit()` on each assigned connection
+- `checkMobile()` — Uses `window.matchMedia('(max-width: 767px)')`. Forces 1x1 grid when matched.
+- **ResizeObserver** — Observes grid container, calls `refitAll()` on resize (gracefully skipped when unavailable, e.g., in tests)
+
+### Phase 7: Dashboard Chrome & Theming
+
+**Files created/rewritten:**
+- `client/js/app.js` — Application orchestrator (290 lines, rewritten from placeholder)
+- `client/js/app.test.js` — 15 tests
+- `client/css/style.css` — Complete sci-fi theme (521 lines, rewritten from placeholder)
+- `client/index.html` — Full HTML structure (37 lines, rewritten from placeholder)
+
+**App capabilities:**
+- IIFE pattern attaching `App` to `window.TerminalDeck` namespace. Auto-init on `DOMContentLoaded` (skippable via `ns._noAutoInit` for tests).
+- `init()` — Fetches `/api/config`, applies theme, creates TerminalConnections, creates LayoutEngine, builds header, applies default layout, wires ephemeral dialog
+- `_applyTheme(theme)` — Sets CSS custom properties on `document.documentElement`: `--td-bg`, `--td-color`, `--td-font-terminal`, `--td-font-size`
+- `_buildHeader(config)` — Creates 8 grid preset buttons in `#grid-presets`, creates named layout buttons from config in `#named-layouts`. Buttons get `active` class on click.
+- `_wireEphemeralDialog()` — "+" button toggles `#ephemeral-dialog` visibility. Create button sends `{type: "create_ephemeral", name, command}` via any active connection's WebSocket. Cancel button hides dialog.
+- `_sendEphemeralDestroy(id)` — Sends `{type: "destroy_ephemeral", id}` via any active WebSocket
+- `_handleSessionsUpdate(sessions)` — Creates new TerminalConnections for unknown session IDs (ephemeral), adds them to strip. Destroys connections for sessions that disappeared (ephemeral only).
+- `_handleConfigReload(newConfig)` — Re-applies theme, rebuilds header buttons
+- `_onActivity(id)` — Updates strip preview text, triggers `strip-item-active` CSS animation (0.6s pulse)
+- `_updateStatus()` — Scans all connections: all active = green dot, some active = yellow, none = red
+
+**CSS theme (`style.css`):**
+- CSS custom properties: `--td-bg: #0a0a0a`, `--td-color: #33ff33`, `--td-surface: #111111`, `--td-border: #222222`, `--td-cyan: #0abdc6`, `--td-danger: #ff3333`, `--td-text: #cccccc`, `--td-text-dim: #666666`
+- Reset and base styles with `box-sizing: border-box`, `100vh` flex column body layout
+- Scan-line overlay via `body::after` with `repeating-linear-gradient` at 0.04 opacity, `pointer-events: none`
+- Header: 44px fixed height, `#0d0d0d` background, flex row with gap
+- Grid cells: 1px border, 4px radius, flex column. Focus-within gets cyan accent border. Cell header: 24px compact bar.
+- Minimized strip: 44px bottom bar, horizontal scroll, auto-hides when empty (`:empty` selector)
+- Strip items: surface background, status LED dot (radial-gradient), name label, monospace preview (truncated to 150px)
+- Activity pulse: `@keyframes` glow on border, 0.6s ease-out
+- Fullscreen overlay: fixed, full viewport, z-index 1000. Close button with × character via `::after` pseudo-element.
+- Ephemeral dialog: centered overlay, dark surface, cyan-focused inputs
+- Status indicator: 10px dot with radial-gradient LED effect and colored box-shadow glow
+- Webkit custom scrollbar: 6px thin, dark track, border-colored thumb
+- Mobile `@media (max-width: 767px)`: hides preset selector, forces 1x1 grid, strip becomes bottom tab bar with hidden previews
+- Fonts: Terminals use Fira Code → Cascadia Code → JetBrains Mono → monospace fallback. UI uses system-ui stack.
+
+**HTML structure (`index.html`):**
+- `<head>`: charset, viewport, title, `vendor/xterm.css`, `css/style.css`
+- `<header id="header">`: title span, `#grid-presets`, `#named-layouts`, spacer div, "+" button, `#connection-status`
+- `<main id="grid-container">`: empty (populated by LayoutEngine)
+- `<div id="minimized-strip">`: empty (populated by LayoutEngine)
+- `<div id="fullscreen-overlay" class="hidden">`: close button + `.fullscreen-terminal` mount
+- `<div id="ephemeral-dialog" class="hidden">`: name input, command input, create/cancel buttons
+- Scripts loaded in order: `vendor/xterm.js`, `vendor/xterm-addon-fit.js`, `js/terminal.js`, `js/layout.js`, `js/app.js`
+
+### Vendor Files
+
+**Files downloaded:**
+- `client/vendor/xterm.js` — xterm.js v5.3.0 UMD bundle from jsdelivr (283 KB, exposes `window.Terminal`)
+- `client/vendor/xterm.css` — xterm.js v5.3.0 stylesheet from jsdelivr (5.4 KB)
+- `client/vendor/xterm-addon-fit.js` — xterm-addon-fit v0.8.0 UMD bundle from jsdelivr (1.5 KB, exposes `window.FitAddon.FitAddon`)
+
 ---
 
 ## Test Summary
@@ -86,9 +185,12 @@
 |--------|------|-------|--------|
 | Config | `server/config.test.js` | 11 | Passing |
 | Sessions | `server/sessions.test.js` | 9 | Passing |
-| WebSocket | `server/websocket.test.js` | 8 | Passing |
-| HTTP Server | `server/index.test.js` | 8 | Passing |
-| **Total** | | **36** | **All passing** |
+| WebSocket | `server/websocket.test.js` | 11 | Passing |
+| HTTP Server | `server/index.test.js` | 12 | Passing |
+| Terminal | `client/js/terminal.test.js` | 18 | Passing |
+| Layout | `client/js/layout.test.js` | 23 | Passing |
+| App | `client/js/app.test.js` | 15 | Passing |
+| **Total** | | **99** | **All passing** |
 
 Run with: `npm test`
 
@@ -96,19 +198,41 @@ Run with: `npm test`
 
 ## Challenges Encountered
 
-### 1. No Node.js installed
+### Phases 1-4
+
+#### 1. No Node.js installed
 The development machine had no Node.js runtime. Resolved by installing nvm and Node.js v24.13.1 LTS.
 
-### 2. No tmux installed
+#### 2. No tmux installed
 tmux was not available and couldn't be installed without sudo. Required manual installation by the user (`sudo apt install tmux`). The session tests are written to gracefully skip if tmux is unavailable.
 
-### 3. Config watcher error event not firing
+#### 3. Config watcher error event not firing
 The initial `load()` implementation silently fell back to the previous valid config on parse errors, which meant the file watcher's try/catch never caught anything and the `error` event was never emitted. Fixed by splitting into two methods:
 - `_loadAndValidate()` — Always throws on errors (used by watcher)
 - `load()` — Wraps `_loadAndValidate()` with fallback logic (used by direct callers)
 
-### 4. Deprecated `url.parse()` warning
+#### 4. Deprecated `url.parse()` warning
 Node.js v24 emits a deprecation warning for `url.parse()`. Fixed by switching to the WHATWG `URL` constructor.
+
+### Phases 5-7
+
+#### 5. nvm not on PATH in Claude Code shell
+The `npm` command was not found because nvm (Node Version Manager) initializes via shell profile scripts that aren't automatically sourced in non-interactive shells. Every `npm`/`npx` invocation required prefixing with `export NVM_DIR="$HOME/.nvm" && [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"` to load nvm first.
+
+#### 6. jsdom setTimeout infinite recursion in terminal tests
+The initial terminal test setup overrode `global.setTimeout` with `window.setTimeout.bind(window)` (jsdom's implementation) to make the IIFE's timers run in the jsdom context. This caused a stack overflow: jsdom's `window.setTimeout` internally calls the global `setTimeout`, which was now jsdom's own implementation, creating infinite recursion.
+
+**Root cause:** MockWebSocket's constructor calls `setTimeout(cb, 0)` to auto-open. With the override, this triggered `window.setTimeout` → `timerInitializationSteps` → `window.setTimeout` → infinite loop.
+
+**Fix:** Removed the `global.setTimeout`/`global.clearTimeout` overrides entirely. Node's native `setTimeout` works fine for both the IIFE's reconnection timers and MockWebSocket's auto-open — there's no need for them to run in jsdom's timer context.
+
+#### 7. DOMContentLoaded auto-init interfering with app tests
+The app.js IIFE registers a `DOMContentLoaded` listener that auto-creates an App instance and calls `init()`. In the test environment using jsdom, this listener fired and created a second App instance that:
+- Called `fetch('/api/config')` a second time, causing `fetch.calledOnce` to be false
+- Called `_buildHeader()` which replaced the DOM buttons with new ones whose click handlers referenced the auto-init's engine, not the test's engine — so `engine.setGrid.calledWith(...)` assertions failed
+- Called `_wireEphemeralDialog()` which added a duplicate click handler to the "+" button — clicking it toggled `hidden` twice, ending back at `hidden`
+
+**Fix:** Added an `ns._noAutoInit` flag check to the DOMContentLoaded registration in app.js. The test sets `window.TerminalDeck._noAutoInit = true` before requiring the module, preventing the auto-init from interfering. This flag has no effect in production since it's never set by the HTML page.
 
 ---
 
@@ -129,14 +253,18 @@ Node.js v24 emits a deprecation warning for `url.parse()`. Fixed by switching to
 - **tmux sessions inside Docker:** tmux sessions persist within the container's lifetime but are lost on container recreation. The `docker-compose.yml` does not persist tmux state. Consider documenting that sessions survive container restarts but not recreations.
 - **Default config references `/workspace`:** The config's `workingDir` paths point to `/workspace/project` which must exist in the container. The docker-compose mounts a named volume at `/workspace` but doesn't pre-populate it.
 
-### Frontend (upcoming phases)
-- **No xterm.js vendor bundle yet:** The `client/vendor/` directory is empty. Frontend phases will need to fetch xterm.js UMD bundles.
-- **No CSS or layout engine:** The client files are placeholders. The grid layout engine, theme system, and terminal widget integration are all pending.
+### Frontend
+- **Vendored xterm.js bundles:** The UMD bundles are checked into `client/vendor/` rather than loaded from a CDN. They must be manually updated when upgrading xterm.js versions. The current v5.3.0 + addon-fit v0.8.0 combination is stable but may drift from upstream.
+- **No xterm.js WebGL renderer:** The default canvas renderer is used. For dashboards with many simultaneous terminals (6+ visible), the WebGL addon (`xterm-addon-webgl`) would significantly improve rendering performance.
+- **ANSI strip regex is basic:** The `stripAnsi()` function in terminal.js uses a simple regex that handles CSI sequences and OSC sequences but may miss less common escape codes (e.g., DCS, APC). This only affects the strip preview text, not terminal rendering.
+- **No touch/drag support for swap:** The swap interaction requires click on strip then click on cell. Mobile users may expect drag-and-drop. The current implementation relies on tap-based interaction only.
+- **ResizeObserver not available in all environments:** The layout engine gracefully skips ResizeObserver setup when unavailable (e.g., in Node.js test environment), but this means tests don't verify auto-refit on container resize.
 
 ### Testing
 - **Session tests depend on real tmux:** Tests require a running tmux-capable environment (not available in many CI systems). Consider adding a CI-specific test configuration or mocking tmux for unit tests.
 - **No test for graceful shutdown:** The server doesn't have a SIGTERM handler to cleanly shut down tmux sessions on process exit. Orphaned tmux sessions could accumulate.
 - **Ephemeral session ID collision:** `Date.now()` for ephemeral IDs could collide if two are created in the same millisecond. Low probability but worth noting.
+- **Frontend tests use jsdom, not a real browser:** jsdom doesn't implement CSS Grid layout, ResizeObserver, or WebGL. Tests verify DOM structure and method calls but can't validate visual rendering, actual terminal display, or responsive layout behavior. Manual browser testing is required for visual verification.
 
 ---
 
@@ -149,6 +277,13 @@ Node.js v24 emits a deprecation warning for `url.parse()`. Fixed by switching to
 | mocha | ^10.8.0 | Test runner (dev) |
 | chai | ^4.5.0 | Assertion library (dev) |
 | sinon | ^19.0.0 | Mocking/stubbing (dev) |
+| jsdom | ^26.0.0 | DOM simulation for frontend tests (dev) |
+
+| Vendor File | Version | Purpose |
+|-------------|---------|---------|
+| xterm.js | 5.3.0 | Terminal emulator widget |
+| xterm.css | 5.3.0 | Terminal emulator styles |
+| xterm-addon-fit | 0.8.0 | Auto-fit terminal to container |
 
 **System requirements:** Node.js 22+, tmux 3.x, bash
 
@@ -157,7 +292,7 @@ Node.js v24 emits a deprecation warning for `url.parse()`. Fixed by switching to
 ## Architecture Diagram
 
 ```
-Browser (future)
+Browser
     |
     | HTTP (static files, API)
     | WebSocket (/ws/terminal/{id})
@@ -185,4 +320,18 @@ Browser (future)
     |
     v
   bash / commands
+
+Browser Frontend
++------------------------------------------------------+
+|  index.html                                          |
+|  +-----------+  +------------+  +-----------------+  |
+|  | app.js    |->| layout.js  |->| terminal.js     |  |
+|  | App       |  | LayoutEngine|  | TerminalConnection|
+|  +-----------+  +------------+  +-----------------+  |
+|       |              |                |               |
+|  fetch /api/config   | CSS Grid       | xterm.js      |
+|                      | management     | + WebSocket   |
++------------------------------------------------------+
+|  vendor/xterm.js  |  vendor/xterm-addon-fit.js       |
++------------------------------------------------------+
 ```

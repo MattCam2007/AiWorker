@@ -1,12 +1,12 @@
 # TerminalDeck
 
-Web-based persistent terminal dashboard. Terminal sessions run inside tmux and persist across browser disconnects, device switches, and reconnections. The frontend (upcoming) is a sci-fi themed dashboard with a configurable grid layout engine.
+Web-based persistent terminal dashboard. Terminal sessions run inside tmux and persist across browser disconnects, device switches, and reconnections. The frontend is a sci-fi themed dashboard with a configurable grid layout engine, xterm.js terminal rendering, and drag-to-swap interaction.
 
 ## Stack
 
 - **Container:** Debian-slim base
 - **Backend:** Node.js, node-pty, ws (WebSocket)
-- **Frontend:** Vanilla ES6 JavaScript, xterm.js, CSS Grid (upcoming)
+- **Frontend:** Vanilla ES6 JavaScript, xterm.js, CSS Grid
 - **Session persistence:** tmux
 - **Config:** Single JSON file on mounted volume
 
@@ -116,7 +116,7 @@ Server -> Client:
 npm test
 ```
 
-Tests use Mocha + Chai. Test files live alongside source files with `.test.js` suffix. tmux must be installed for session and integration tests to run.
+Tests use Mocha + Chai + Sinon. Test files live alongside source files with `.test.js` suffix. Backend tests require tmux. Frontend tests use jsdom for DOM simulation.
 
 ## Project Structure
 
@@ -133,13 +133,19 @@ Tests use Mocha + Chai. Test files live alongside source files with `.test.js` s
 │   ├── websocket.js             # WebSocket terminal bridge
 │   └── *.test.js                # Co-located tests
 ├── client/
-│   ├── index.html               # Dashboard HTML
-│   ├── vendor/                  # xterm.js UMD bundles (upcoming)
-│   ├── css/style.css            # Styles (upcoming)
+│   ├── index.html               # Dashboard HTML shell
+│   ├── vendor/
+│   │   ├── xterm.js             # xterm.js v5.3.0 UMD bundle
+│   │   ├── xterm.css            # xterm.js stylesheet
+│   │   └── xterm-addon-fit.js   # FitAddon v0.8.0 UMD bundle
+│   ├── css/
+│   │   └── style.css            # Sci-fi theme, grid layout, responsive
 │   └── js/
-│       ├── app.js               # App entry (upcoming)
-│       ├── terminal.js          # Terminal widget (upcoming)
-│       └── layout.js            # Grid layout engine (upcoming)
+│       ├── app.js               # App orchestrator, config fetch, chrome
+│       ├── terminal.js          # xterm.js + WebSocket connection manager
+│       ├── layout.js            # CSS Grid layout engine, swap, fullscreen
+│       ├── test-helpers.js      # Mock classes for frontend tests
+│       └── *.test.js            # Co-located tests
 ├── test/
 │   └── setup.js                 # Test harness
 └── docs/
@@ -154,10 +160,10 @@ Tests use Mocha + Chai. Test files live alongside source files with `.test.js` s
 
 ## Current Status
 
-**Foundation complete (Phases 1-4). 36/36 tests passing.**
+**All phases complete (Phases 1-7). 99/99 tests passing.**
 
 The backend is fully functional: config loading with hot-reload, tmux session management, WebSocket terminal bridge, and HTTP server with static file serving and API endpoints.
 
-Frontend phases (dashboard UI, xterm.js integration, grid layout, theming) have not been started. Client files are placeholders.
+The frontend is fully functional: xterm.js terminal rendering with WebSocket reconnection, CSS Grid layout engine with 8 presets and swap interaction, fullscreen mode, ephemeral terminal creation, connection status indicator, and a sci-fi themed UI with mobile responsive support.
 
 See [docs/build-report.md](docs/build-report.md) for the full build report including challenges, architecture, and known issues.
