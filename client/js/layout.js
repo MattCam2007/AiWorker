@@ -1,0 +1,1 @@
+// TerminalDeck layout engine - placeholder
