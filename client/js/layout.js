@@ -25,6 +25,7 @@
     this._fullscreenConnection = null;
     this._fullscreenOrigCell = null;
     this._resizeObserver = null;
+    this._onCloseTerminal = null;
 
     this._initResizeObserver();
     this._initKeyboardListeners();
@@ -156,16 +157,41 @@
     cell.classList.remove('cell-empty');
     this._cellMap.set(cell, { connection: connection, terminalId: terminalId });
 
-    // Show header with terminal name
+    // Show header with terminal name and close button
     var name = connection.config.name || terminalId;
-    header.textContent = name;
+    header.innerHTML = '';
+
+    var nameSpan = document.createElement('span');
+    nameSpan.className = 'cell-header-name';
+    nameSpan.textContent = name;
+    header.appendChild(nameSpan);
+
+    var closeBtn = document.createElement('button');
+    closeBtn.className = 'cell-header-close';
+    closeBtn.innerHTML = '&times;';
+    var self = this;
+    closeBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      if (self._onCloseTerminal) self._onCloseTerminal(terminalId);
+    });
+    header.appendChild(closeBtn);
+
     header.style.display = '';
 
     // Attach to mount point
     connection.attach(mount);
 
-    // Remove from strip if present
+    // Remove from strip if present — may toggle strip visibility via CSS :empty,
+    // changing the grid container's height after fit() already ran.
     this._removeFromStrip(terminalId);
+
+    // Schedule a deferred refit to catch any layout shifts from strip
+    // visibility changes or header display changes.
+    if (typeof requestAnimationFrame !== 'undefined') {
+      requestAnimationFrame(function () {
+        connection.refit();
+      });
+    }
   };
 
   LayoutEngine.prototype._addToStrip = function (terminalId, connection) {
@@ -190,6 +216,16 @@
     item.appendChild(preview);
 
     var self = this;
+
+    var closeBtn = document.createElement('button');
+    closeBtn.className = 'strip-close';
+    closeBtn.innerHTML = '&times;';
+    closeBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      if (self._onCloseTerminal) self._onCloseTerminal(terminalId);
+    });
+    item.appendChild(closeBtn);
+
     item.addEventListener('click', function () {
       self._handleStripClick(terminalId, connection);
     });
@@ -208,7 +244,7 @@
         cell.classList.add('cell-empty');
         var header = cell.querySelector('.cell-header');
         if (header) {
-          header.textContent = '';
+          header.innerHTML = '';
           header.style.display = 'none';
         }
         var mount = cell.querySelector('.cell-terminal');

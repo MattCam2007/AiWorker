@@ -32,6 +32,10 @@ describe('TerminalConnection', function () {
     };
     window.WebSocket = MockWebSocket;
 
+    global.requestAnimationFrame = function (cb) {
+      cb();
+    };
+
     // Clear module cache and load terminal.js
     delete require.cache[require.resolve('./terminal')];
     require('./terminal');

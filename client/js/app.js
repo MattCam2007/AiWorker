@@ -45,9 +45,13 @@
   };
 
   App.prototype._createEngine = function () {
+    var self = this;
     var grid = document.getElementById('grid-container');
     var strip = document.getElementById('minimized-strip');
     this._engine = new ns.LayoutEngine(grid, strip);
+    this._engine._onCloseTerminal = function (id) {
+      self._sendDestroyTerminal(id);
+    };
     this._engine.setGrid('2x2');
   };
 
@@ -152,6 +156,13 @@
       self._assignToFirstEmptyCell(s.id, conn);
     });
     this._updateEmptyState();
+
+    // Refit after DOM settles to ensure terminals fill their containers
+    if (typeof requestAnimationFrame !== 'undefined') {
+      requestAnimationFrame(function () {
+        if (self._engine) self._engine.refitAll();
+      });
+    }
   };
 
   App.prototype._createConnection = function (id, name) {
@@ -203,6 +214,13 @@
         self._assignToFirstEmptyCell(s.id, conn);
       }
     });
+
+    // Refit after DOM settles to ensure terminals fill their containers
+    if (typeof requestAnimationFrame !== 'undefined') {
+      requestAnimationFrame(function () {
+        if (self._engine) self._engine.refitAll();
+      });
+    }
 
     // Remove connections for gone sessions
     currentIds.forEach(function (id) {

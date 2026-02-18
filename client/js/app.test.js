@@ -398,6 +398,63 @@ describe('App', function () {
     });
   });
 
+  it('engine._onCloseTerminal is wired to _sendDestroyTerminal', function () {
+    var app = new App();
+    return app.init().then(function () {
+      return new Promise(function (resolve) { setTimeout(resolve, 10); });
+    }).then(function () {
+      expect(app._engine._onCloseTerminal).to.be.a('function');
+
+      app._engine._onCloseTerminal('test-id');
+
+      var sent = app._controlWs._sent;
+      var msg = JSON.parse(sent[sent.length - 1]);
+      expect(msg.type).to.equal('destroy_terminal');
+      expect(msg.id).to.equal('test-id');
+    });
+  });
+
+  it('_handleSessionsUpdate() calls refitAll after rAF', function () {
+    var rafCallbacks = [];
+    global.requestAnimationFrame = function (cb) {
+      rafCallbacks.push(cb);
+    };
+
+    var app = new App();
+    return app.init().then(function () {
+      var callsBefore = app._engine.refitAll.callCount;
+
+      app._handleSessionsUpdate([
+        { id: 't1', name: 'Terminal 1' },
+        { id: 't2', name: 'Terminal 2' },
+        { id: 't3', name: 'New' }
+      ]);
+
+      // Execute queued rAF callbacks
+      rafCallbacks.forEach(function (cb) { cb(); });
+
+      expect(app._engine.refitAll.callCount).to.be.greaterThan(callsBefore);
+    });
+  });
+
+  it('_applySessions() calls refitAll after rAF', function () {
+    var rafCallbacks = [];
+    global.requestAnimationFrame = function (cb) {
+      rafCallbacks.push(cb);
+    };
+
+    var app = new App();
+    return app.init().then(function () {
+      // refitAll should not have been called yet (rAF is deferred)
+      var callsBefore = app._engine.refitAll.callCount;
+
+      // Execute all queued rAF callbacks
+      rafCallbacks.forEach(function (cb) { cb(); });
+
+      expect(app._engine.refitAll.callCount).to.be.greaterThan(callsBefore);
+    });
+  });
+
   it('shows empty state when no sessions exist', function () {
     // Override fetch to return empty sessions
     global.fetch = sinon.stub().callsFake(function (url) {

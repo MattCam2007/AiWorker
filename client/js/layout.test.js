@@ -198,7 +198,9 @@ describe('LayoutEngine', function () {
     engine.assignTerminal(cell, 't1', conn);
 
     var header = cell.querySelector('.cell-header');
-    expect(header.textContent).to.equal('My Terminal');
+    var nameSpan = header.querySelector('.cell-header-name');
+    expect(nameSpan).to.exist;
+    expect(nameSpan.textContent).to.equal('My Terminal');
     expect(header.style.display).to.not.equal('none');
   });
 
@@ -437,5 +439,106 @@ describe('LayoutEngine', function () {
 
     expect(result).to.be.true;
     expect(grid.querySelectorAll('.grid-cell').length).to.equal(1);
+  });
+
+  it('assignTerminal() schedules deferred refit on the connection', function () {
+    var grid = document.getElementById('grid-container');
+    var strip = document.getElementById('minimized-strip');
+    var engine = new LayoutEngine(grid, strip);
+
+    engine.setGrid('1x1');
+    var cell = grid.querySelector('.grid-cell');
+    var conn = makeConnection('t1', 'Test');
+    engine.assignTerminal(cell, 't1', conn);
+
+    // rAF is stubbed to run immediately, so refit should have been called
+    expect(conn.refit.called).to.be.true;
+  });
+
+  it('assignTerminal() shows close button in header', function () {
+    var grid = document.getElementById('grid-container');
+    var strip = document.getElementById('minimized-strip');
+    var engine = new LayoutEngine(grid, strip);
+
+    engine.setGrid('1x1');
+    var cell = grid.querySelector('.grid-cell');
+    var conn = makeConnection('t1', 'Test');
+    engine.assignTerminal(cell, 't1', conn);
+
+    var closeBtn = cell.querySelector('.cell-header-close');
+    expect(closeBtn).to.exist;
+  });
+
+  it('close button in header calls _onCloseTerminal callback', function () {
+    var grid = document.getElementById('grid-container');
+    var strip = document.getElementById('minimized-strip');
+    var engine = new LayoutEngine(grid, strip);
+
+    var closeSpy = sinon.spy();
+    engine._onCloseTerminal = closeSpy;
+
+    engine.setGrid('1x1');
+    var cell = grid.querySelector('.grid-cell');
+    var conn = makeConnection('t1', 'Test');
+    engine.assignTerminal(cell, 't1', conn);
+
+    var closeBtn = cell.querySelector('.cell-header-close');
+    closeBtn.click();
+
+    expect(closeSpy.calledOnce).to.be.true;
+    expect(closeSpy.calledWith('t1')).to.be.true;
+  });
+
+  it('strip item has close button', function () {
+    var grid = document.getElementById('grid-container');
+    var strip = document.getElementById('minimized-strip');
+    var engine = new LayoutEngine(grid, strip);
+
+    engine.setGrid('1x1');
+    var conn = makeConnection('t1', 'Term 1');
+    engine._addToStrip('t1', conn);
+
+    var closeBtn = strip.querySelector('.strip-close');
+    expect(closeBtn).to.exist;
+  });
+
+  it('strip close button calls _onCloseTerminal callback', function () {
+    var grid = document.getElementById('grid-container');
+    var strip = document.getElementById('minimized-strip');
+    var engine = new LayoutEngine(grid, strip);
+
+    var closeSpy = sinon.spy();
+    engine._onCloseTerminal = closeSpy;
+
+    engine.setGrid('1x1');
+    var conn = makeConnection('t1', 'Term 1');
+    engine._addToStrip('t1', conn);
+
+    var closeBtn = strip.querySelector('.strip-close');
+    closeBtn.click();
+
+    expect(closeSpy.calledOnce).to.be.true;
+    expect(closeSpy.calledWith('t1')).to.be.true;
+  });
+
+  it('strip close button stopPropagation prevents swap', function () {
+    var grid = document.getElementById('grid-container');
+    var strip = document.getElementById('minimized-strip');
+    var engine = new LayoutEngine(grid, strip);
+
+    var closeSpy = sinon.spy();
+    engine._onCloseTerminal = closeSpy;
+
+    engine.setGrid('1x1');
+    var conn = makeConnection('t1', 'Term 1');
+    engine._addToStrip('t1', conn);
+
+    var closeBtn = strip.querySelector('.strip-close');
+    closeBtn.click();
+
+    // _swapSource should NOT be set because stopPropagation prevented
+    // the strip item click handler from firing
+    expect(engine._swapSource).to.be.null;
+    expect(closeSpy.calledOnce).to.be.true;
   });
 });

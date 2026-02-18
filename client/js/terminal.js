@@ -52,7 +52,19 @@
 
     // Open terminal in element
     this._terminal.open(el);
-    this._fitAddon.fit();
+
+    // Defer fit() so the browser can calculate layout dimensions first.
+    // Calling fit() synchronously after open() reads stale/zero sizes when
+    // the container's geometry is still settling (e.g. header just shown,
+    // strip appearing/disappearing via CSS :empty).
+    var self = this;
+    if (typeof requestAnimationFrame !== 'undefined') {
+      requestAnimationFrame(function () {
+        if (self._fitAddon) self._fitAddon.fit();
+      });
+    } else {
+      this._fitAddon.fit();
+    }
 
     // Connect WebSocket
     this._connectWS();
