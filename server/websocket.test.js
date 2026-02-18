@@ -32,17 +32,12 @@ describe('TerminalWSServer', function () {
   let port;
 
   const testConfig = {
-    settings: { shell: '/bin/bash' },
-    terminals: [
-      { id: 'wstest1', name: 'WS Test 1', workingDir: '/tmp', autoStart: true }
-    ],
-    layouts: {}
+    settings: { shell: '/bin/bash' }
   };
 
   beforeEach(async () => {
     cleanupTmuxSessions();
     sessionMgr = new SessionManager(testConfig);
-    await sessionMgr.startAll();
 
     httpServer = http.createServer();
     wsServer = new TerminalWSServer(httpServer, sessionMgr);
@@ -63,9 +58,17 @@ describe('TerminalWSServer', function () {
     cleanupTmuxSessions();
   });
 
-  function connectWS(terminalId) {
+  function connectTerminalWS(terminalId) {
     return new Promise((resolve, reject) => {
       const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/terminal/${terminalId}`);
+      ws.on('open', () => resolve(ws));
+      ws.on('error', reject);
+    });
+  }
+
+  function connectControlWS() {
+    return new Promise((resolve, reject) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/control`);
       ws.on('open', () => resolve(ws));
       ws.on('error', reject);
     });
@@ -85,9 +88,68 @@ describe('TerminalWSServer', function () {
     });
   }
 
-  describe('connection', () => {
-    it('establishes a WebSocket connection and receives terminal output', async () => {
-      const ws = await connectWS('wstest1');
+  describe('control channel', () => {
+    it('establishes a control WebSocket connection', async () => {
+      const ws = await connectControlWS();
+      expect(ws.readyState).to.equal(WebSocket.OPEN);
+      ws.close();
+    });
+
+    it('creates a terminal via create_terminal message', async () => {
+      const ws = await connectControlWS();
+      const sessionsPromise = waitForMessage(ws, (m) => m.type === 'sessions');
+
+      ws.send(JSON.stringify({ type: 'create_terminal', name: 'Test Shell' }));
+
+      const msg = await sessionsPromise;
+      expect(msg.sessions).to.have.length(1);
+      expect(msg.sessions[0].name).to.equal('Test Shell');
+
+      ws.close();
+    });
+
+    it('destroys a terminal via destroy_terminal message', async () => {
+      const ws = await connectControlWS();
+
+      // Create first
+      const createPromise = waitForMessage(ws, (m) => m.type === 'sessions');
+      ws.send(JSON.stringify({ type: 'create_terminal', name: 'Temp' }));
+      const createMsg = await createPromise;
+      const id = createMsg.sessions[0].id;
+
+      // Destroy
+      const destroyPromise = waitForMessage(ws, (m) => m.type === 'sessions');
+      ws.send(JSON.stringify({ type: 'destroy_terminal', id }));
+      const destroyMsg = await destroyPromise;
+      expect(destroyMsg.sessions).to.have.length(0);
+
+      ws.close();
+    });
+
+    it('destroy_terminal allows destroying any terminal', async () => {
+      const ws = await connectControlWS();
+
+      // Create a terminal
+      const createPromise = waitForMessage(ws, (m) => m.type === 'sessions');
+      ws.send(JSON.stringify({ type: 'create_terminal', name: 'Any' }));
+      const createMsg = await createPromise;
+      const id = createMsg.sessions[0].id;
+
+      // Destroy without needing ephemeral- prefix
+      const destroyPromise = waitForMessage(ws, (m) => m.type === 'sessions');
+      ws.send(JSON.stringify({ type: 'destroy_terminal', id }));
+      const destroyMsg = await destroyPromise;
+      expect(destroyMsg.sessions.some((s) => s.id === id)).to.be.false;
+
+      ws.close();
+    });
+  });
+
+  describe('terminal connection', () => {
+    it('establishes a terminal WebSocket and receives output', async () => {
+      // Create a terminal first
+      const result = await sessionMgr.createTerminal('Test');
+      const ws = await connectTerminalWS(result.id);
       const msg = await waitForMessage(ws, (m) => m.type === 'output');
       expect(msg.type).to.equal('output');
       expect(msg.data).to.be.a('string');
@@ -106,14 +168,12 @@ describe('TerminalWSServer', function () {
 
   describe('input', () => {
     it('sends input to the terminal via WebSocket', async () => {
-      const ws = await connectWS('wstest1');
-      // Wait for initial output (shell prompt)
+      const result = await sessionMgr.createTerminal('Test');
+      const ws = await connectTerminalWS(result.id);
       await waitForMessage(ws, (m) => m.type === 'output');
 
-      // Send input
       ws.send(JSON.stringify({ type: 'input', data: 'echo TESTINPUT123\n' }));
 
-      // Should see the input echoed back in output
       const msg = await waitForMessage(ws, (m) =>
         m.type === 'output' && m.data.includes('TESTINPUT123')
       );
@@ -124,22 +184,21 @@ describe('TerminalWSServer', function () {
 
   describe('resize', () => {
     it('handles resize messages with valid dimensions', async () => {
-      const ws = await connectWS('wstest1');
+      const result = await sessionMgr.createTerminal('Test');
+      const ws = await connectTerminalWS(result.id);
       await waitForMessage(ws, (m) => m.type === 'output');
 
-      // Should not throw
       ws.send(JSON.stringify({ type: 'resize', cols: 120, rows: 40 }));
 
-      // Give it a moment to process
       await new Promise((r) => setTimeout(r, 200));
       ws.close();
     });
 
     it('ignores resize messages with invalid dimensions', async () => {
-      const ws = await connectWS('wstest1');
+      const result = await sessionMgr.createTerminal('Test');
+      const ws = await connectTerminalWS(result.id);
       await waitForMessage(ws, (m) => m.type === 'output');
 
-      // These should all be silently ignored (no crash)
       ws.send(JSON.stringify({ type: 'resize', cols: -1, rows: 40 }));
       ws.send(JSON.stringify({ type: 'resize', cols: 120, rows: 0 }));
       ws.send(JSON.stringify({ type: 'resize', cols: 501, rows: 40 }));
@@ -153,17 +212,15 @@ describe('TerminalWSServer', function () {
 
   describe('multi-client', () => {
     it('multiple clients share the same pty and receive the same output', async () => {
-      const ws1 = await connectWS('wstest1');
-      const ws2 = await connectWS('wstest1');
+      const result = await sessionMgr.createTerminal('Test');
+      const ws1 = await connectTerminalWS(result.id);
+      const ws2 = await connectTerminalWS(result.id);
 
-      // Wait for both to get initial output
       await waitForMessage(ws1, (m) => m.type === 'output');
       await waitForMessage(ws2, (m) => m.type === 'output');
 
-      // Send input from client 1
       ws1.send(JSON.stringify({ type: 'input', data: 'echo MULTI_TEST\n' }));
 
-      // Both should see the output (from the shared pty)
       const [msg1, msg2] = await Promise.all([
         waitForMessage(ws1, (m) => m.type === 'output' && m.data.includes('MULTI_TEST')),
         waitForMessage(ws2, (m) => m.type === 'output' && m.data.includes('MULTI_TEST'))
@@ -175,155 +232,33 @@ describe('TerminalWSServer', function () {
       ws1.close();
       ws2.close();
     });
-
-    it('input from either client goes to the shared pty', async () => {
-      const ws1 = await connectWS('wstest1');
-      const ws2 = await connectWS('wstest1');
-
-      await waitForMessage(ws1, (m) => m.type === 'output');
-      await waitForMessage(ws2, (m) => m.type === 'output');
-
-      // Send input from client 2
-      ws2.send(JSON.stringify({ type: 'input', data: 'echo FROM_CLIENT2\n' }));
-
-      // Client 1 should see it too
-      const msg = await waitForMessage(ws1, (m) =>
-        m.type === 'output' && m.data.includes('FROM_CLIENT2')
-      );
-      expect(msg.data).to.include('FROM_CLIENT2');
-
-      ws1.close();
-      ws2.close();
-    });
   });
 
   describe('disconnect cleanup', () => {
     it('cleans up pty attachment on disconnect without killing tmux session', async () => {
-      const ws = await connectWS('wstest1');
+      const result = await sessionMgr.createTerminal('Test');
+      const ws = await connectTerminalWS(result.id);
       await waitForMessage(ws, (m) => m.type === 'output');
       ws.close();
 
-      // Wait for cleanup
       await new Promise((r) => setTimeout(r, 300));
 
       // tmux session should still exist
       try {
-        execSync('tmux has-session -t terminaldeck-wstest1 2>/dev/null');
+        execSync(`tmux has-session -t terminaldeck-${result.id} 2>/dev/null`);
       } catch {
         throw new Error('tmux session was killed on disconnect');
       }
     });
-
-    it('keeps pty alive while at least one client is connected', async () => {
-      const ws1 = await connectWS('wstest1');
-      const ws2 = await connectWS('wstest1');
-
-      await waitForMessage(ws1, (m) => m.type === 'output');
-      await waitForMessage(ws2, (m) => m.type === 'output');
-
-      // Disconnect first client
-      ws1.close();
-      await new Promise((r) => setTimeout(r, 300));
-
-      // Second client should still receive output
-      ws2.send(JSON.stringify({ type: 'input', data: 'echo STILL_ALIVE\n' }));
-      const msg = await waitForMessage(ws2, (m) =>
-        m.type === 'output' && m.data.includes('STILL_ALIVE')
-      );
-      expect(msg.data).to.include('STILL_ALIVE');
-
-      ws2.close();
-    });
   });
 
   describe('control messages', () => {
-    it('properly frames JSON messages', async () => {
-      const ws = await connectWS('wstest1');
+    it('properly frames JSON messages on terminal WS', async () => {
+      const result = await sessionMgr.createTerminal('Test');
+      const ws = await connectTerminalWS(result.id);
       const msg = await waitForMessage(ws, (m) => m.type === 'output');
       expect(msg).to.have.property('type');
       expect(msg).to.have.property('data');
-      ws.close();
-    });
-  });
-
-  describe('ephemeral sessions via WebSocket', () => {
-    it('creates and destroys ephemeral sessions', async () => {
-      const ws = await connectWS('wstest1');
-      await waitForMessage(ws, (m) => m.type === 'output');
-
-      // Request ephemeral session creation
-      ws.send(JSON.stringify({ type: 'create_ephemeral', name: 'Temp Test' }));
-
-      const sessionsMsg = await waitForMessage(ws, (m) => m.type === 'sessions');
-      const ephemeral = sessionsMsg.sessions.find((s) => s.name === 'Temp Test');
-      expect(ephemeral).to.exist;
-      expect(ephemeral.id).to.match(/^ephemeral-/);
-
-      // Destroy it
-      ws.send(JSON.stringify({ type: 'destroy_ephemeral', id: ephemeral.id }));
-
-      const updatedMsg = await waitForMessage(ws, (m) => m.type === 'sessions');
-      const found = updatedMsg.sessions.find((s) => s.id === ephemeral.id);
-      expect(found).to.not.exist;
-
-      ws.close();
-    });
-
-    it('create_ephemeral ignores the command parameter', async () => {
-      const ws = await connectWS('wstest1');
-      await waitForMessage(ws, (m) => m.type === 'output');
-
-      // Send create_ephemeral with a command parameter - it should be ignored
-      ws.send(JSON.stringify({
-        type: 'create_ephemeral',
-        name: 'NoCmd Test',
-        command: '/usr/bin/evil-binary'
-      }));
-
-      const sessionsMsg = await waitForMessage(ws, (m) => m.type === 'sessions');
-      const ephemeral = sessionsMsg.sessions.find((s) => s.name === 'NoCmd Test');
-      expect(ephemeral).to.exist;
-      expect(ephemeral.id).to.match(/^ephemeral-/);
-
-      // The session should use the default shell, not the provided command
-      // The command stored in the session should be the configured shell, not the evil binary
-      expect(ephemeral.command).to.not.equal('/usr/bin/evil-binary');
-
-      // Clean up
-      ws.send(JSON.stringify({ type: 'destroy_ephemeral', id: ephemeral.id }));
-      await waitForMessage(ws, (m) => m.type === 'sessions');
-      ws.close();
-    });
-
-    it('destroy_ephemeral rejects non-ephemeral session IDs', async () => {
-      const ws = await connectWS('wstest1');
-      await waitForMessage(ws, (m) => m.type === 'output');
-
-      // Try to destroy a non-ephemeral session
-      ws.send(JSON.stringify({ type: 'destroy_ephemeral', id: 'wstest1' }));
-
-      const errorMsg = await waitForMessage(ws, (m) => m.type === 'error');
-      expect(errorMsg.message).to.equal('Can only destroy ephemeral sessions');
-
-      // The session should still exist
-      ws.send(JSON.stringify({ type: 'create_ephemeral', name: 'Trigger List' }));
-      const sessionsMsg = await waitForMessage(ws, (m) => m.type === 'sessions');
-      const wstest1 = sessionsMsg.sessions.find((s) => s.id === 'wstest1');
-      expect(wstest1).to.exist;
-
-      ws.close();
-    });
-
-    it('destroy_ephemeral rejects missing ID', async () => {
-      const ws = await connectWS('wstest1');
-      await waitForMessage(ws, (m) => m.type === 'output');
-
-      // Try to destroy without providing an ID
-      ws.send(JSON.stringify({ type: 'destroy_ephemeral' }));
-
-      const errorMsg = await waitForMessage(ws, (m) => m.type === 'error');
-      expect(errorMsg.message).to.equal('Can only destroy ephemeral sessions');
-
       ws.close();
     });
   });

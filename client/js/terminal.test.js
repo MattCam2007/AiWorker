@@ -181,42 +181,6 @@ describe('TerminalConnection', function () {
     }, 10);
   });
 
-  it('incoming sessions message calls _onSessions callback', function (done) {
-    var tc = new window.TerminalDeck.TerminalConnection('t7', {});
-    var spy = sinon.stub();
-    tc._onSessions = spy;
-
-    var el = window.document.getElementById('mount');
-    tc.attach(el);
-
-    setTimeout(function () {
-      var sessions = [{ id: 's1', name: 'Session 1' }];
-      tc._ws._receive({ type: 'sessions', sessions: sessions });
-      expect(spy.calledOnce).to.be.true;
-      expect(spy.firstCall.args[0]).to.deep.equal(sessions);
-      tc.destroy();
-      done();
-    }, 10);
-  });
-
-  it('incoming config_reload message calls _onConfigReload callback', function (done) {
-    var tc = new window.TerminalDeck.TerminalConnection('t8', {});
-    var spy = sinon.stub();
-    tc._onConfigReload = spy;
-
-    var el = window.document.getElementById('mount');
-    tc.attach(el);
-
-    setTimeout(function () {
-      var config = { settings: {}, terminals: [] };
-      tc._ws._receive({ type: 'config_reload', config: config });
-      expect(spy.calledOnce).to.be.true;
-      expect(spy.firstCall.args[0]).to.deep.equal(config);
-      tc.destroy();
-      done();
-    }, 10);
-  });
-
   it('detach() disposes terminal and closes WebSocket', function (done) {
     var tc = new window.TerminalDeck.TerminalConnection('t9', {});
     var el = window.document.getElementById('mount');

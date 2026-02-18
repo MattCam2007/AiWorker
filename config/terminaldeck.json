@@ -6,52 +6,6 @@
       "fontFamily": "Fira Code, monospace",
       "fontSize": 14
     },
-    "shell": "/bin/bash",
-    "defaultLayout": "dev"
-  },
-  "terminals": [
-    {
-      "id": "claude",
-      "name": "Claude Code",
-      "command": "claude",
-      "workingDir": "/workspace/project",
-      "autoStart": true
-    },
-    {
-      "id": "logs",
-      "name": "Log Watcher",
-      "command": "tail -f /var/log/syslog",
-      "workingDir": "/workspace",
-      "autoStart": true
-    },
-    {
-      "id": "shell1",
-      "name": "Shell",
-      "workingDir": "/workspace",
-      "autoStart": true
-    },
-    {
-      "id": "git",
-      "name": "Git Ops",
-      "workingDir": "/workspace/project",
-      "autoStart": true
-    }
-  ],
-  "layouts": {
-    "dev": {
-      "grid": "2x2",
-      "cells": [
-        ["claude", "logs"],
-        ["shell1", "git"]
-      ]
-    },
-    "focus": {
-      "grid": "1x1",
-      "cells": [["claude"]]
-    },
-    "monitoring": {
-      "grid": "1x3",
-      "cells": [["logs", "shell1", "git"]]
-    }
+    "shell": "/bin/bash"
   }
 }

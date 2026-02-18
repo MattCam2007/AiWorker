@@ -1,12 +1,15 @@
 FROM debian:bookworm-slim
 
-# Install system dependencies
+# Install system dependencies (build-essential needed for node-pty native compilation)
 RUN apt-get update && apt-get install -y \
     curl \
     tmux \
     bash \
     git \
     procps \
+    build-essential \
+    python3 \
+    vim \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Node.js LTS
@@ -19,12 +22,17 @@ WORKDIR /app
 
 # Copy package files and install dependencies
 COPY package.json package-lock.json* ./
-RUN npm install --production
+RUN npm install --omit=dev
 
 # Copy application files
 COPY server/ ./server/
 COPY client/ ./client/
 COPY config/ ./config/
+
+# Install Claude Code CLI (native binary — no Node.js dependency)
+RUN curl -fsSL https://claude.ai/install.sh | bash
+ENV PATH="/root/.claude/local/bin:${PATH}"
+ENV DISABLE_AUTOUPDATER=1
 
 # Create default directories
 RUN mkdir -p /workspace

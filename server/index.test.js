@@ -74,14 +74,14 @@ describe('HTTP Server', function () {
   });
 
   describe('API endpoints', () => {
-    it('GET /api/config returns valid JSON config', async () => {
+    it('GET /api/config returns valid JSON config with settings', async () => {
       const res = await request(app.port, '/api/config');
       expect(res.status).to.equal(200);
       expect(res.headers['content-type']).to.include('application/json');
       const config = JSON.parse(res.body);
       expect(config).to.have.property('settings');
-      expect(config).to.have.property('terminals');
-      expect(config).to.have.property('layouts');
+      expect(config.settings).to.have.property('theme');
+      expect(config.settings).to.have.property('shell');
     });
 
     it('GET /api/sessions returns valid JSON session list', async () => {
@@ -117,20 +117,21 @@ describe('HTTP Server', function () {
   });
 
   describe('WebSocket upgrade', () => {
-    it('upgrades connections on /ws/terminal/ paths', (done) => {
+    it('upgrades connections on /ws/control path', (done) => {
       const WebSocket = require('ws');
-      // First need a valid terminal - use the autoStart ones from config
-      // The server creates sessions from config on startup
-      // Get the session list to find a valid ID
-      request(app.port, '/api/sessions').then((res) => {
-        const sessions = JSON.parse(res.body);
-        if (sessions.length === 0) {
-          // No sessions, skip
-          done();
-          return;
-        }
-        const id = sessions[0].id;
-        const ws = new WebSocket(`ws://127.0.0.1:${app.port}/ws/terminal/${id}`);
+      const ws = new WebSocket(`ws://127.0.0.1:${app.port}/ws/control`);
+      ws.on('open', () => {
+        ws.close();
+        done();
+      });
+      ws.on('error', done);
+    });
+
+    it('upgrades connections on /ws/terminal/ paths for valid sessions', (done) => {
+      const WebSocket = require('ws');
+      // Create a terminal first, then connect to it
+      app.sessionManager.createTerminal('Test').then((result) => {
+        const ws = new WebSocket(`ws://127.0.0.1:${app.port}/ws/terminal/${result.id}`);
         ws.on('open', () => {
           ws.close();
           done();

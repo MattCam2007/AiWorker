@@ -26,18 +26,7 @@ describe('ConfigManager', () => {
         fontFamily: 'Fira Code, monospace',
         fontSize: 14
       },
-      shell: '/bin/bash',
-      defaultLayout: 'dev'
-    },
-    terminals: [
-      { id: 'shell1', name: 'Shell', workingDir: '/tmp', autoStart: true },
-      { id: 'logs', name: 'Logs', command: 'tail -f /var/log/syslog', workingDir: '/tmp', autoStart: false }
-    ],
-    layouts: {
-      dev: {
-        grid: '1x2',
-        cells: [['shell1', 'logs']]
-      }
+      shell: '/bin/bash'
     }
   };
 
@@ -51,8 +40,7 @@ describe('ConfigManager', () => {
       const mgr = new ConfigManager(configPath);
       const cfg = mgr.load();
       expect(cfg.settings.shell).to.equal('/bin/bash');
-      expect(cfg.terminals).to.have.length(2);
-      expect(cfg.layouts.dev.grid).to.equal('1x2');
+      expect(cfg.settings.theme.defaultColor).to.equal('#33ff33');
     });
 
     it('throws if config file does not exist and no previous config', () => {
@@ -63,34 +51,21 @@ describe('ConfigManager', () => {
 
   describe('defaults for missing optional fields', () => {
     it('provides default settings when settings section is minimal', () => {
-      const minimal = {
-        settings: {},
-        terminals: [{ id: 'shell1', name: 'Shell' }],
-        layouts: {
-          default: { grid: '1x1', cells: [['shell1']] }
-        }
-      };
+      const minimal = { settings: {} };
       writeConfig(minimal);
       const mgr = new ConfigManager(configPath);
       const cfg = mgr.load();
       expect(cfg.settings.shell).to.equal('/bin/bash');
       expect(cfg.settings.theme).to.be.an('object');
       expect(cfg.settings.theme.fontSize).to.be.a('number');
-      expect(cfg.settings.defaultLayout).to.be.a('string');
     });
 
-    it('provides defaults for terminal entries missing optional fields', () => {
-      const cfg = {
-        settings: {},
-        terminals: [{ id: 't1', name: 'Test' }],
-        layouts: { default: { grid: '1x1', cells: [['t1']] } }
-      };
-      writeConfig(cfg);
+    it('provides default settings when settings is absent', () => {
+      writeConfig({});
       const mgr = new ConfigManager(configPath);
-      const loaded = mgr.load();
-      const t = loaded.terminals[0];
-      expect(t.autoStart).to.equal(false);
-      expect(t.workingDir).to.be.a('string');
+      const cfg = mgr.load();
+      expect(cfg.settings.shell).to.equal('/bin/bash');
+      expect(cfg.settings.theme.defaultColor).to.equal('#33ff33');
     });
   });
 
@@ -104,7 +79,7 @@ describe('ConfigManager', () => {
       fs.writeFileSync(configPath, '{bad json!!!');
       const cfg = mgr.load();
       // Should still have the last valid config
-      expect(cfg.terminals).to.have.length(2);
+      expect(cfg.settings.shell).to.equal('/bin/bash');
     });
 
     it('throws on first load if JSON is malformed and no previous config exists', () => {
@@ -115,37 +90,24 @@ describe('ConfigManager', () => {
   });
 
   describe('validation', () => {
-    it('requires settings, terminals, and layouts sections', () => {
-      writeConfig({ settings: {} });
+    it('rejects non-object settings', () => {
+      writeConfig({ settings: 'bad' });
       const mgr = new ConfigManager(configPath);
-      expect(() => mgr.load()).to.throw(/terminals/i);
+      expect(() => mgr.load()).to.throw(/settings/i);
     });
 
-    it('validates terminal IDs are unique', () => {
-      const cfg = {
-        settings: {},
-        terminals: [
-          { id: 'dup', name: 'One' },
-          { id: 'dup', name: 'Two' }
-        ],
-        layouts: { default: { grid: '1x1', cells: [['dup']] } }
-      };
-      writeConfig(cfg);
+    it('accepts config with only settings', () => {
+      writeConfig({ settings: { shell: '/bin/zsh' } });
       const mgr = new ConfigManager(configPath);
-      expect(() => mgr.load()).to.throw(/duplicate/i);
+      const cfg = mgr.load();
+      expect(cfg.settings.shell).to.equal('/bin/zsh');
     });
 
-    it('validates layout cell references match existing terminal IDs', () => {
-      const cfg = {
-        settings: {},
-        terminals: [{ id: 'shell1', name: 'Shell' }],
-        layouts: {
-          dev: { grid: '1x2', cells: [['shell1', 'nonexistent']] }
-        }
-      };
-      writeConfig(cfg);
+    it('accepts empty config object', () => {
+      writeConfig({});
       const mgr = new ConfigManager(configPath);
-      expect(() => mgr.load()).to.throw(/nonexistent/i);
+      const cfg = mgr.load();
+      expect(cfg.settings).to.be.an('object');
     });
   });
 
@@ -157,7 +119,7 @@ describe('ConfigManager', () => {
       mgr.watch();
 
       mgr.on('change', (newConfig) => {
-        expect(newConfig.terminals).to.have.length(1);
+        expect(newConfig.settings.shell).to.equal('/bin/zsh');
         mgr.stopWatching();
         done();
       });
@@ -165,9 +127,7 @@ describe('ConfigManager', () => {
       // Modify the config file
       setTimeout(() => {
         const updated = {
-          settings: validConfig.settings,
-          terminals: [{ id: 'shell1', name: 'Shell', workingDir: '/tmp' }],
-          layouts: { dev: { grid: '1x1', cells: [['shell1']] } }
+          settings: { ...validConfig.settings, shell: '/bin/zsh' }
         };
         writeConfig(updated);
       }, 100);
@@ -184,11 +144,8 @@ describe('ConfigManager', () => {
         changeCount++;
       });
 
-      // Write multiple rapid changes
       const updated = {
-        settings: validConfig.settings,
-        terminals: [{ id: 'shell1', name: 'Shell', workingDir: '/tmp' }],
-        layouts: { dev: { grid: '1x1', cells: [['shell1']] } }
+        settings: { ...validConfig.settings, shell: '/bin/zsh' }
       };
 
       setTimeout(() => { writeConfig(updated); }, 50);
@@ -211,7 +168,7 @@ describe('ConfigManager', () => {
 
       mgr.on('error', (err) => {
         // Should still have old valid config
-        expect(mgr.getConfig().terminals).to.have.length(2);
+        expect(mgr.getConfig().settings.shell).to.equal('/bin/bash');
         mgr.stopWatching();
         done();
       });

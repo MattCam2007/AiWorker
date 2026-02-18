@@ -57,7 +57,7 @@ async function createApp(options = {}) {
   const config = configManager.load();
 
   const sessionManager = new SessionManager(config);
-  await sessionManager.startAll();
+  await sessionManager.discoverSessions();
 
   const server = http.createServer((req, res) => {
     // API routes
@@ -85,10 +85,9 @@ async function createApp(options = {}) {
   const wsServer = new TerminalWSServer(server, sessionManager);
   wsServer.startActivityBroadcasting();
 
-  // Config hot-reload
+  // Config hot-reload (settings/theme only)
   configManager.watch();
-  configManager.on('change', async (newConfig) => {
-    await sessionManager.handleConfigReload(newConfig);
+  configManager.on('change', (newConfig) => {
     wsServer.broadcastConfigReload(newConfig);
   });
   configManager.on('error', (err) => {

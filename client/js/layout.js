@@ -198,6 +198,25 @@
     this._stripItems.set(terminalId, { element: item, connection: connection });
   };
 
+  LayoutEngine.prototype._removeFromGrid = function (terminalId) {
+    var self = this;
+    this._cells.forEach(function (cell) {
+      var info = self._cellMap.get(cell);
+      if (info && info.terminalId === terminalId) {
+        info.connection = null;
+        info.terminalId = null;
+        cell.classList.add('cell-empty');
+        var header = cell.querySelector('.cell-header');
+        if (header) {
+          header.textContent = '';
+          header.style.display = 'none';
+        }
+        var mount = cell.querySelector('.cell-terminal');
+        if (mount) mount.innerHTML = '';
+      }
+    });
+  };
+
   LayoutEngine.prototype._removeFromStrip = function (terminalId) {
     var entry = this._stripItems.get(terminalId);
     if (entry) {

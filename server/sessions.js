@@ -5,14 +5,16 @@ const pty = require('node-pty');
 
 const execFileAsync = util.promisify(execFile);
 
+const SESSION_PREFIX = 'terminaldeck-';
+
 class SessionManager {
   constructor(config) {
     this._config = config;
-    this._sessions = new Map(); // id -> { id, name, command, workingDir, ephemeral }
+    this._sessions = new Map(); // id -> { id, name, command, workingDir }
   }
 
   _tmuxSessionName(id) {
-    return `terminaldeck-${id}`;
+    return `${SESSION_PREFIX}${id}`;
   }
 
   async _tmuxSessionExists(id) {
@@ -24,23 +26,44 @@ class SessionManager {
     }
   }
 
-  async createSession(terminalConfig) {
-    const { id, name, command, workingDir } = terminalConfig;
-    const tmuxName = this._tmuxSessionName(id);
-    const shell = command || this._config.settings.shell || '/bin/bash';
-    const cwd = workingDir || '/home';
-
-    if (!(await this._tmuxSessionExists(id))) {
-      await execFileAsync('tmux', ['new-session', '-d', '-s', tmuxName, '-c', cwd, shell]);
+  async discoverSessions() {
+    let tmuxSessions;
+    try {
+      const { stdout } = await execFileAsync('tmux', ['list-sessions', '-F', '#{session_name}']);
+      tmuxSessions = stdout.trim().split('\n').filter(Boolean);
+    } catch {
+      tmuxSessions = [];
     }
+
+    for (const name of tmuxSessions) {
+      if (!name.startsWith(SESSION_PREFIX)) continue;
+      const id = name.slice(SESSION_PREFIX.length);
+      if (!this._sessions.has(id)) {
+        this._sessions.set(id, {
+          id,
+          name: id,
+          command: this._config.settings.shell || '/bin/bash',
+          workingDir: '/home'
+        });
+      }
+    }
+  }
+
+  async createTerminal(name, command) {
+    const id = randomUUID();
+    const shell = command || this._config.settings.shell || '/bin/bash';
+    const tmuxName = this._tmuxSessionName(id);
+
+    await execFileAsync('tmux', ['new-session', '-d', '-s', tmuxName, shell]);
 
     this._sessions.set(id, {
       id,
       name: name || id,
       command: shell,
-      workingDir: cwd,
-      ephemeral: false
+      workingDir: '/home'
     });
+
+    return { id, name: name || id };
   }
 
   async attachSession(id) {
@@ -91,60 +114,10 @@ class SessionManager {
       result.push({
         id,
         name: session.name,
-        active: activeTmuxSessions.has(this._tmuxSessionName(id)),
-        ephemeral: session.ephemeral
+        active: activeTmuxSessions.has(this._tmuxSessionName(id))
       });
     }
     return result;
-  }
-
-  async startAll() {
-    const autoStartTerminals = this._config.terminals.filter((t) => t.autoStart);
-    await Promise.all(autoStartTerminals.map((terminal) => this.createSession(terminal)));
-  }
-
-  async createEphemeral(name, command) {
-    const id = `ephemeral-${randomUUID()}`;
-    const shell = command || this._config.settings.shell || '/bin/bash';
-    const tmuxName = this._tmuxSessionName(id);
-
-    await execFileAsync('tmux', ['new-session', '-d', '-s', tmuxName, shell]);
-
-    this._sessions.set(id, {
-      id,
-      name: name || id,
-      command: shell,
-      workingDir: '/home',
-      ephemeral: true
-    });
-
-    return { id, name: name || id };
-  }
-
-  async handleConfigReload(newConfig) {
-    const oldIds = new Set(
-      [...this._sessions.entries()]
-        .filter(([, s]) => !s.ephemeral)
-        .map(([id]) => id)
-    );
-    const allNewIds = new Set(newConfig.terminals.map((t) => t.id));
-    const autoStartTerminals = newConfig.terminals.filter((t) => t.autoStart);
-
-    // Remove sessions no longer in config
-    const toRemove = [...oldIds].filter((id) => !allNewIds.has(id));
-    for (const id of toRemove) {
-      console.log(`Config reload: Terminal '${id}' removed`);
-    }
-    await Promise.all(toRemove.map((id) => this.destroySession(id)));
-
-    // Add new sessions (only autoStart)
-    const toAdd = autoStartTerminals.filter((terminal) => !this._sessions.has(terminal.id));
-    for (const terminal of toAdd) {
-      console.log(`Config reload: Terminal '${terminal.id}' added`);
-    }
-    await Promise.all(toAdd.map((terminal) => this.createSession(terminal)));
-
-    this._config = newConfig;
   }
 }
 

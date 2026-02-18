@@ -14,18 +14,14 @@ describe('App', function () {
         fontFamily: 'Fira Code, monospace',
         fontSize: 14
       },
-      shell: '/bin/bash',
-      defaultLayout: 'dev'
-    },
-    terminals: [
-      { id: 't1', name: 'Terminal 1', autoStart: true },
-      { id: 't2', name: 'Terminal 2', autoStart: true }
-    ],
-    layouts: {
-      dev: { grid: '2x1', cells: [['t1', 't2']] },
-      focus: { grid: '1x1', cells: [['t1']] }
+      shell: '/bin/bash'
     }
   };
+
+  var testSessions = [
+    { id: 't1', name: 'Terminal 1', active: true },
+    { id: 't2', name: 'Terminal 2', active: true }
+  ];
 
   function setupDOM() {
     dom = new JSDOM(
@@ -33,7 +29,6 @@ describe('App', function () {
         '<header id="header">' +
         '<span class="title">TerminalDeck</span>' +
         '<div id="grid-presets"></div>' +
-        '<div id="named-layouts"></div>' +
         '<div class="spacer"></div>' +
         '<button id="add-terminal-btn">+</button>' +
         '<div id="connection-status" class="status-indicator"></div>' +
@@ -58,9 +53,19 @@ describe('App', function () {
     global.window = window;
     global.document = window.document;
     global.WebSocket = MockWebSocket;
-    global.fetch = sinon.stub().resolves({
-      json: sinon.stub().resolves(testConfig)
+
+    // fetch returns config on first call, sessions on second
+    var callCount = 0;
+    global.fetch = sinon.stub().callsFake(function (url) {
+      if (url === '/api/config') {
+        return Promise.resolve({ json: () => Promise.resolve(testConfig) });
+      }
+      if (url === '/api/sessions') {
+        return Promise.resolve({ json: () => Promise.resolve(testSessions) });
+      }
+      return Promise.resolve({ json: () => Promise.resolve({}) });
     });
+
     global.ResizeObserver = undefined;
     global.requestAnimationFrame = function (cb) {
       cb();
@@ -77,8 +82,6 @@ describe('App', function () {
       this._ws = null;
       this._onActivity = null;
       this._onStatusChange = null;
-      this._onSessions = null;
-      this._onConfigReload = null;
       this.attach = sinon.stub();
       this.detach = sinon.stub();
       this.refit = sinon.stub();
@@ -92,11 +95,28 @@ describe('App', function () {
       this._gridContainer = grid;
       this._stripContainer = strip;
       this._stripItems = new Map();
-      this.setGrid = sinon.stub();
+      this._cells = [];
+      this._cellMap = new Map();
+      this.setGrid = sinon.stub().callsFake(function (spec) {
+        // Create mock cells based on spec
+        var parts = spec.split('x');
+        var total = parseInt(parts[0]) * parseInt(parts[1]);
+        this._cells = [];
+        this._cellMap = new Map();
+        for (var i = 0; i < total; i++) {
+          var cell = {};
+          this._cells.push(cell);
+          this._cellMap.set(cell, { connection: null, terminalId: null });
+        }
+      });
       this.applyLayout = sinon.stub();
       this.refitAll = sinon.stub();
+      this.assignTerminal = sinon.stub().callsFake(function (cell, id, conn) {
+        this._cellMap.set(cell, { connection: conn, terminalId: id });
+      });
       this._addToStrip = sinon.stub();
       this._removeFromStrip = sinon.stub();
+      this._removeFromGrid = sinon.stub();
     };
     window.TerminalDeck.LayoutEngine.GRID_PRESETS = {
       '1x1': { cols: 1, rows: 1 },
@@ -133,15 +153,15 @@ describe('App', function () {
     expect(App).to.be.a('function');
   });
 
-  it('init() fetches /api/config', function () {
+  it('init() fetches /api/config and /api/sessions', function () {
     var app = new App();
     return app.init().then(function () {
-      expect(global.fetch.calledOnce).to.be.true;
-      expect(global.fetch.firstCall.args[0]).to.equal('/api/config');
+      expect(global.fetch.calledWith('/api/config')).to.be.true;
+      expect(global.fetch.calledWith('/api/sessions')).to.be.true;
     });
   });
 
-  it('init() creates TerminalConnection for each configured terminal', function () {
+  it('init() creates TerminalConnection for each session', function () {
     var app = new App();
     return app.init().then(function () {
       expect(Object.keys(app._connections)).to.have.length(2);
@@ -150,13 +170,19 @@ describe('App', function () {
     });
   });
 
-  it('init() creates LayoutEngine and calls applyLayout with default layout', function () {
+  it('init() creates LayoutEngine and sets default 2x2 grid', function () {
     var app = new App();
     return app.init().then(function () {
       expect(app._engine).to.exist;
-      expect(app._engine.applyLayout.calledOnce).to.be.true;
-      var call = app._engine.applyLayout.firstCall;
-      expect(call.args[0]).to.deep.equal(testConfig.layouts.dev);
+      expect(app._engine.setGrid.calledWith('2x2')).to.be.true;
+    });
+  });
+
+  it('init() connects control WebSocket to /ws/control', function () {
+    var app = new App();
+    return app.init().then(function () {
+      expect(app._controlWs).to.exist;
+      expect(app._controlWs.url).to.equal('ws://localhost:3000/ws/control');
     });
   });
 
@@ -177,38 +203,17 @@ describe('App', function () {
     });
   });
 
-  it('_buildHeader() creates named layout buttons from config', function () {
-    var app = new App();
-    return app.init().then(function () {
-      var btns = document.querySelectorAll('#named-layouts .layout-btn');
-      expect(btns.length).to.equal(2);
-      var names = Array.from(btns).map(function (b) {
-        return b.textContent;
-      });
-      expect(names).to.include('dev');
-      expect(names).to.include('focus');
-    });
-  });
-
   it('preset button click calls engine.setGrid() with correct preset', function () {
     var app = new App();
     return app.init().then(function () {
       var btn = document.querySelector('#grid-presets .preset-btn[data-preset="2x2"]');
       btn.click();
+      // setGrid is called once during init (2x2) and once on click
       expect(app._engine.setGrid.calledWith('2x2')).to.be.true;
     });
   });
 
-  it('named layout button click calls engine.applyLayout() with correct layout', function () {
-    var app = new App();
-    return app.init().then(function () {
-      var btn = document.querySelector('#named-layouts .layout-btn[data-layout="focus"]');
-      btn.click();
-      expect(app._engine.applyLayout.calledWith(testConfig.layouts.focus)).to.be.true;
-    });
-  });
-
-  it('"+" button click shows ephemeral dialog', function () {
+  it('"+" button click shows create terminal dialog', function () {
     var app = new App();
     return app.init().then(function () {
       var addBtn = document.getElementById('add-terminal-btn');
@@ -220,119 +225,68 @@ describe('App', function () {
     });
   });
 
-  it('ephemeral create sends create_ephemeral message via WS', function () {
+  it('create button sends create_terminal message via control WS', function () {
     var app = new App();
     return app.init().then(function () {
-      // Give a connection an active WS
-      var mockWs = { readyState: 1, send: sinon.stub() };
-      app._connections.t1._ws = mockWs;
-      app._connections.t1.isActive = sinon.stub().returns(true);
-
+      // Wait for control WS to open
+      return new Promise(function (resolve) { setTimeout(resolve, 10); });
+    }).then(function () {
       var nameInput = document.querySelector('.ephemeral-name');
       var cmdInput = document.querySelector('.ephemeral-command');
-      nameInput.value = 'Test Ephemeral';
+      nameInput.value = 'Test Terminal';
       cmdInput.value = 'htop';
 
       document.querySelector('.ephemeral-create').click();
 
-      expect(mockWs.send.calledOnce).to.be.true;
-      var msg = JSON.parse(mockWs.send.firstCall.args[0]);
-      expect(msg.type).to.equal('create_ephemeral');
-      expect(msg.name).to.equal('Test Ephemeral');
+      var sent = app._controlWs._sent;
+      expect(sent.length).to.be.greaterThan(0);
+      var msg = JSON.parse(sent[sent.length - 1]);
+      expect(msg.type).to.equal('create_terminal');
+      expect(msg.name).to.equal('Test Terminal');
       expect(msg.command).to.equal('htop');
     });
   });
 
-  it('ephemeral destroy sends destroy_ephemeral message', function () {
+  it('_sendDestroyTerminal sends destroy_terminal via control WS', function () {
     var app = new App();
     return app.init().then(function () {
-      var mockWs = { readyState: 1, send: sinon.stub() };
-      app._connections.t1._ws = mockWs;
-      app._connections.t1.isActive = sinon.stub().returns(true);
+      return new Promise(function (resolve) { setTimeout(resolve, 10); });
+    }).then(function () {
+      app._sendDestroyTerminal('some-id');
 
-      app._sendEphemeralDestroy('ephemeral-123');
-
-      expect(mockWs.send.calledOnce).to.be.true;
-      var msg = JSON.parse(mockWs.send.firstCall.args[0]);
-      expect(msg.type).to.equal('destroy_ephemeral');
-      expect(msg.id).to.equal('ephemeral-123');
+      var sent = app._controlWs._sent;
+      var msg = JSON.parse(sent[sent.length - 1]);
+      expect(msg.type).to.equal('destroy_terminal');
+      expect(msg.id).to.equal('some-id');
     });
   });
 
-  it('_handleSessionsUpdate() creates connections for new ephemeral sessions', function () {
+  it('_handleSessionsUpdate() creates connections for new sessions', function () {
     var app = new App();
     return app.init().then(function () {
       var sessions = [
         { id: 't1', name: 'Terminal 1' },
         { id: 't2', name: 'Terminal 2' },
-        { id: 'ephemeral-1', name: 'New Session' }
+        { id: 't3', name: 'New Session' }
       ];
 
       app._handleSessionsUpdate(sessions);
 
-      expect(app._connections['ephemeral-1']).to.exist;
-      expect(app._engine._addToStrip.called).to.be.true;
+      expect(app._connections['t3']).to.exist;
     });
   });
 
   it('_handleSessionsUpdate() destroys connections for removed sessions', function () {
     var app = new App();
     return app.init().then(function () {
-      // Add ephemeral
-      app._connections['ephemeral-1'] = new window.TerminalDeck.TerminalConnection('ephemeral-1', {
-        name: 'Temp',
-        ephemeral: true
-      });
-
-      // Sessions without ephemeral-1
+      // Sessions without t2
       var sessions = [
-        { id: 't1', name: 'Terminal 1' },
-        { id: 't2', name: 'Terminal 2' }
+        { id: 't1', name: 'Terminal 1' }
       ];
 
       app._handleSessionsUpdate(sessions);
 
-      expect(app._connections['ephemeral-1']).to.not.exist;
-    });
-  });
-
-  it('_handleConfigReload() creates connections for newly added terminals', function () {
-    var app = new App();
-    return app.init().then(function () {
-      var newConfig = {
-        settings: testConfig.settings,
-        terminals: [
-          { id: 't1', name: 'Terminal 1', autoStart: true },
-          { id: 't2', name: 'Terminal 2', autoStart: true },
-          { id: 't3', name: 'Terminal 3', autoStart: true }
-        ],
-        layouts: testConfig.layouts
-      };
-
-      app._handleConfigReload(newConfig);
-
-      expect(app._connections.t3).to.exist;
-      expect(app._engine._addToStrip.called).to.be.true;
-    });
-  });
-
-  it('_handleConfigReload() destroys connections for removed terminals', function () {
-    var app = new App();
-    return app.init().then(function () {
-      var newConfig = {
-        settings: testConfig.settings,
-        terminals: [
-          { id: 't1', name: 'Terminal 1', autoStart: true }
-        ],
-        layouts: {
-          dev: { grid: '1x1', cells: [['t1']] },
-          focus: { grid: '1x1', cells: [['t1']] }
-        }
-      };
-
-      app._handleConfigReload(newConfig);
-
-      expect(app._connections.t2).to.not.exist;
+      expect(app._connections['t2']).to.not.exist;
     });
   });
 
@@ -341,16 +295,14 @@ describe('App', function () {
     return app.init().then(function () {
       var newConfig = {
         settings: {
-          ...testConfig.settings,
           theme: {
             defaultColor: '#ff0000',
             background: '#111111',
             fontFamily: 'monospace',
             fontSize: 16
-          }
-        },
-        terminals: testConfig.terminals,
-        layouts: testConfig.layouts
+          },
+          shell: '/bin/bash'
+        }
       };
 
       app._handleConfigReload(newConfig);
@@ -361,29 +313,48 @@ describe('App', function () {
     });
   });
 
-  it('_handleConfigReload() rebuilds named layout buttons', function () {
+  it('control WS message dispatches sessions update', function () {
     var app = new App();
     return app.init().then(function () {
-      var newConfig = {
-        settings: testConfig.settings,
-        terminals: testConfig.terminals,
-        layouts: {
-          newlayout: { grid: '1x1', cells: [['t1']] }
+      return new Promise(function (resolve) { setTimeout(resolve, 10); });
+    }).then(function () {
+      // Simulate sessions message from control WS
+      app._controlWs._receive({
+        type: 'sessions',
+        sessions: [
+          { id: 't1', name: 'Terminal 1' },
+          { id: 't2', name: 'Terminal 2' },
+          { id: 't3', name: 'New' }
+        ]
+      });
+
+      expect(app._connections['t3']).to.exist;
+    });
+  });
+
+  it('control WS message dispatches config reload', function () {
+    var app = new App();
+    return app.init().then(function () {
+      return new Promise(function (resolve) { setTimeout(resolve, 10); });
+    }).then(function () {
+      app._controlWs._receive({
+        type: 'config_reload',
+        config: {
+          settings: {
+            theme: { defaultColor: '#0000ff', background: '#222', fontFamily: 'mono', fontSize: 12 },
+            shell: '/bin/zsh'
+          }
         }
-      };
+      });
 
-      app._handleConfigReload(newConfig);
-
-      var btns = document.querySelectorAll('#named-layouts .layout-btn');
-      expect(btns.length).to.equal(1);
-      expect(btns[0].textContent).to.equal('newlayout');
+      var root = document.documentElement;
+      expect(root.style.getPropertyValue('--td-color')).to.equal('#0000ff');
     });
   });
 
   it('_handleActivity() updates strip status dot and triggers pulse', function () {
     var app = new App();
     return app.init().then(function () {
-      // Put t1 in strip by adding it manually
       app._engine._stripItems.set('t1', {
         element: (function () {
           var el = document.createElement('div');
@@ -424,6 +395,27 @@ describe('App', function () {
       app._connections.t2.isActive = sinon.stub().returns(true);
       app._updateStatus();
       expect(statusEl.classList.contains('status-green')).to.be.true;
+    });
+  });
+
+  it('shows empty state when no sessions exist', function () {
+    // Override fetch to return empty sessions
+    global.fetch = sinon.stub().callsFake(function (url) {
+      if (url === '/api/config') {
+        return Promise.resolve({ json: () => Promise.resolve(testConfig) });
+      }
+      if (url === '/api/sessions') {
+        return Promise.resolve({ json: () => Promise.resolve([]) });
+      }
+      return Promise.resolve({ json: () => Promise.resolve({}) });
+    });
+
+    var app = new App();
+    return app.init().then(function () {
+      var grid = document.getElementById('grid-container');
+      var emptyState = grid.querySelector('.empty-state');
+      expect(emptyState).to.exist;
+      expect(emptyState.textContent).to.include('No terminals');
     });
   });
 });

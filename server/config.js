@@ -9,8 +9,7 @@ const DEFAULT_SETTINGS = {
     fontFamily: 'Fira Code, monospace',
     fontSize: 14
   },
-  shell: '/bin/bash',
-  defaultLayout: 'default'
+  shell: '/bin/bash'
 };
 
 function deepEqual(a, b) {
@@ -93,34 +92,8 @@ class ConfigManager extends EventEmitter {
   }
 
   _validate(config) {
-    if (!config.terminals || !Array.isArray(config.terminals)) {
-      throw new Error('Config must have a "terminals" array');
-    }
-    if (!config.layouts || typeof config.layouts !== 'object') {
-      throw new Error('Config must have a "layouts" object');
-    }
-
-    // Validate unique terminal IDs
-    const ids = new Set();
-    for (const terminal of config.terminals) {
-      if (ids.has(terminal.id)) {
-        throw new Error(`Duplicate terminal ID: "${terminal.id}"`);
-      }
-      ids.add(terminal.id);
-    }
-
-    // Validate layout cell references
-    for (const [layoutName, layout] of Object.entries(config.layouts)) {
-      if (!layout.cells) continue;
-      for (const row of layout.cells) {
-        for (const cellId of row) {
-          if (!ids.has(cellId)) {
-            throw new Error(
-              `Layout "${layoutName}" references nonexistent terminal ID: "${cellId}"`
-            );
-          }
-        }
-      }
+    if (config.settings && typeof config.settings !== 'object') {
+      throw new Error('"settings" must be an object');
     }
   }
 
@@ -138,17 +111,7 @@ class ConfigManager extends EventEmitter {
       theme
     };
 
-    const terminals = config.terminals.map((t) => ({
-      autoStart: false,
-      workingDir: '/home',
-      ...t
-    }));
-
-    return {
-      settings: mergedSettings,
-      terminals,
-      layouts: config.layouts
-    };
+    return { settings: mergedSettings };
   }
 }
 

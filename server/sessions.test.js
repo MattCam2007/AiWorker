@@ -43,13 +43,7 @@ describe('SessionManager', function () {
   this.timeout(15000);
 
   const testConfig = {
-    settings: { shell: '/bin/bash' },
-    terminals: [
-      { id: 'test1', name: 'Test 1', workingDir: '/tmp', autoStart: true },
-      { id: 'test2', name: 'Test 2', workingDir: '/tmp', autoStart: true },
-      { id: 'test3', name: 'Test 3', workingDir: '/tmp', autoStart: false }
-    ],
-    layouts: {}
+    settings: { shell: '/bin/bash' }
   };
 
   beforeEach(function () {
@@ -60,74 +54,104 @@ describe('SessionManager', function () {
     cleanupTmuxSessions();
   });
 
-  describe('createSession', () => {
-    it('creates a tmux session for a terminal config', async () => {
+  describe('createTerminal', () => {
+    it('creates a tmux session and returns id and name', async () => {
       const mgr = new SessionManager(testConfig);
-      await mgr.createSession(testConfig.terminals[0]);
+      const result = await mgr.createTerminal('Test Shell');
+      expect(result.id).to.be.a('string');
+      expect(result.name).to.equal('Test Shell');
       const sessions = await mgr.listSessions();
       expect(sessions).to.have.length(1);
-      expect(sessions[0].id).to.equal('test1');
+      expect(sessions[0].name).to.equal('Test Shell');
+    });
+
+    it('creates a tmux session with a custom command', async () => {
+      const mgr = new SessionManager(testConfig);
+      const result = await mgr.createTerminal('Custom', '/bin/sh');
+      expect(result.id).to.be.a('string');
+      expect(result.name).to.equal('Custom');
+    });
+
+    it('uses default shell when no command provided', async () => {
+      const mgr = new SessionManager(testConfig);
+      const result = await mgr.createTerminal('Default Shell');
+      expect(result.id).to.be.a('string');
     });
   });
 
-  describe('startup with autoStart', () => {
-    it('creates sessions for all autoStart terminals', async () => {
+  describe('discoverSessions', () => {
+    it('discovers existing terminaldeck tmux sessions', async () => {
+      // Create a tmux session manually with the terminaldeck- prefix
+      const id = 'discover-test-1';
+      execSync(`tmux new-session -d -s terminaldeck-${id} /bin/bash`);
+
       const mgr = new SessionManager(testConfig);
-      await mgr.startAll();
+      await mgr.discoverSessions();
+
       const sessions = await mgr.listSessions();
-      const ids = sessions.map((s) => s.id);
-      expect(ids).to.include('test1');
-      expect(ids).to.include('test2');
-      expect(ids).to.not.include('test3');
+      expect(sessions.some((s) => s.id === id)).to.be.true;
     });
-  });
 
-  describe('existing session reuse', () => {
-    it('reuses existing tmux sessions instead of creating duplicates', async () => {
-      // Create a session manually
-      execSync('tmux new-session -d -s terminaldeck-test1 /bin/bash');
+    it('ignores non-terminaldeck tmux sessions', async () => {
+      execSync('tmux new-session -d -s other-session /bin/bash');
 
       const mgr = new SessionManager(testConfig);
-      await mgr.createSession(testConfig.terminals[0]);
+      await mgr.discoverSessions();
 
-      // Should still only have one tmux session with that name
-      const output = execSync(
-        'tmux list-sessions -F "#{session_name}" 2>/dev/null',
-        { encoding: 'utf-8' }
-      );
-      const matches = output
-        .trim()
-        .split('\n')
-        .filter((s) => s === 'terminaldeck-test1');
-      expect(matches).to.have.length(1);
+      const sessions = await mgr.listSessions();
+      expect(sessions.some((s) => s.id === 'other-session')).to.be.false;
+
+      // Cleanup non-terminaldeck session
+      try { execSync('tmux kill-session -t other-session'); } catch {}
+    });
+
+    it('does not duplicate already-tracked sessions', async () => {
+      const mgr = new SessionManager(testConfig);
+      const result = await mgr.createTerminal('Existing');
+      await mgr.discoverSessions();
+
+      const sessions = await mgr.listSessions();
+      const matching = sessions.filter((s) => s.id === result.id);
+      expect(matching).to.have.length(1);
     });
   });
 
   describe('attachSession', () => {
     it('returns a pty instance attached to the tmux session', async () => {
       const mgr = new SessionManager(testConfig);
-      await mgr.createSession(testConfig.terminals[0]);
-      const pty = await mgr.attachSession('test1');
+      const result = await mgr.createTerminal('Test');
+      const pty = await mgr.attachSession(result.id);
       expect(pty).to.have.property('write');
       expect(pty).to.have.property('onData');
       pty.kill();
+    });
+
+    it('throws for non-existent terminal', async () => {
+      const mgr = new SessionManager(testConfig);
+      try {
+        await mgr.attachSession('nonexistent');
+        expect.fail('Should have thrown');
+      } catch (err) {
+        expect(err.message).to.include('No tmux session found');
+      }
     });
   });
 
   describe('destroySession', () => {
     it('kills the tmux session and removes it from tracking', async () => {
       const mgr = new SessionManager(testConfig);
-      await mgr.createSession(testConfig.terminals[0]);
-      await mgr.destroySession('test1');
+      const result = await mgr.createTerminal('Test');
+      await mgr.destroySession(result.id);
       const sessions = await mgr.listSessions();
       expect(sessions).to.have.length(0);
     });
   });
 
   describe('listSessions', () => {
-    it('returns all active sessions with status info', async () => {
+    it('returns all tracked sessions with status info', async () => {
       const mgr = new SessionManager(testConfig);
-      await mgr.startAll();
+      await mgr.createTerminal('Shell 1');
+      await mgr.createTerminal('Shell 2');
       const sessions = await mgr.listSessions();
       expect(sessions).to.be.an('array');
       expect(sessions).to.have.length(2);
@@ -136,47 +160,6 @@ describe('SessionManager', function () {
         expect(s).to.have.property('name');
         expect(s).to.have.property('active');
       }
-    });
-  });
-
-  describe('ephemeral sessions', () => {
-    it('creates an ephemeral session with auto-generated ID', async () => {
-      const mgr = new SessionManager(testConfig);
-      const session = await mgr.createEphemeral('Temp Shell');
-      expect(session.id).to.match(/^ephemeral-/);
-      expect(session.name).to.equal('Temp Shell');
-      const sessions = await mgr.listSessions();
-      expect(sessions.some((s) => s.id === session.id)).to.be.true;
-    });
-
-    it('can destroy an ephemeral session', async () => {
-      const mgr = new SessionManager(testConfig);
-      const session = await mgr.createEphemeral('Temp Shell');
-      await mgr.destroySession(session.id);
-      const sessions = await mgr.listSessions();
-      expect(sessions.some((s) => s.id === session.id)).to.be.false;
-    });
-  });
-
-  describe('config reload', () => {
-    it('creates new sessions and removes old ones on config change', async () => {
-      const mgr = new SessionManager(testConfig);
-      await mgr.startAll();
-
-      const newConfig = {
-        settings: { shell: '/bin/bash' },
-        terminals: [
-          { id: 'test1', name: 'Test 1', workingDir: '/tmp', autoStart: true },
-          { id: 'test4', name: 'New Terminal', workingDir: '/tmp', autoStart: true }
-        ],
-        layouts: {}
-      };
-      await mgr.handleConfigReload(newConfig);
-      const sessions = await mgr.listSessions();
-      const ids = sessions.map((s) => s.id);
-      expect(ids).to.include('test1');
-      expect(ids).to.include('test4');
-      expect(ids).to.not.include('test2');
     });
   });
 });

@@ -8,26 +8,96 @@ class TerminalWSServer {
     this._terminals = new Map();
     this._activity = new ActivityTracker();
 
-    this._wss = new WebSocketServer({ noServer: true });
+    // Control channel clients
+    this._controlClients = new Set();
+
+    this._terminalWss = new WebSocketServer({ noServer: true });
+    this._controlWss = new WebSocketServer({ noServer: true });
 
     httpServer.on('upgrade', (req, socket, head) => {
       const pathname = new URL(req.url, `http://${req.headers.host}`).pathname;
-      const match = pathname.match(/^\/ws\/terminal\/(.+)$/);
 
-      if (!match) {
-        socket.destroy();
+      if (pathname === '/ws/control') {
+        this._controlWss.handleUpgrade(req, socket, head, (ws) => {
+          this._handleControlConnection(ws);
+        });
         return;
       }
 
-      const terminalId = match[1];
+      const match = pathname.match(/^\/ws\/terminal\/(.+)$/);
+      if (match) {
+        const terminalId = match[1];
+        this._terminalWss.handleUpgrade(req, socket, head, (ws) => {
+          this._handleTerminalConnection(ws, terminalId);
+        });
+        return;
+      }
 
-      this._wss.handleUpgrade(req, socket, head, (ws) => {
-        this._handleConnection(ws, terminalId);
-      });
+      socket.destroy();
     });
   }
 
-  async _handleConnection(ws, terminalId) {
+  // --- Control channel ---
+
+  _handleControlConnection(ws) {
+    this._controlClients.add(ws);
+
+    ws.on('message', async (raw) => {
+      let msg;
+      try {
+        msg = JSON.parse(raw.toString());
+      } catch {
+        return;
+      }
+
+      try {
+        switch (msg.type) {
+          case 'create_terminal': {
+            await this._sessionManager.createTerminal(msg.name, msg.command);
+            await this._broadcastSessions();
+            break;
+          }
+          case 'destroy_terminal': {
+            if (!msg.id) break;
+            await this._sessionManager.destroySession(msg.id);
+            await this._broadcastSessions();
+            break;
+          }
+        }
+      } catch (err) {
+        console.error('Control WebSocket handler error:', err);
+        try {
+          ws.send(JSON.stringify({ type: 'error', message: err.message || 'Internal error' }));
+        } catch {}
+      }
+    });
+
+    ws.on('close', () => {
+      this._controlClients.delete(ws);
+    });
+  }
+
+  _sendToControl(msg) {
+    const data = typeof msg === 'string' ? msg : JSON.stringify(msg);
+    for (const ws of this._controlClients) {
+      if (ws.readyState === ws.OPEN) {
+        ws.send(data);
+      }
+    }
+  }
+
+  async _broadcastSessions() {
+    const sessions = await this._sessionManager.listSessions();
+    this._sendToControl({ type: 'sessions', sessions });
+  }
+
+  broadcastConfigReload(config) {
+    this._sendToControl({ type: 'config_reload', config });
+  }
+
+  // --- Terminal connections ---
+
+  async _handleTerminalConnection(ws, terminalId) {
     let terminal = this._terminals.get(terminalId);
 
     if (!terminal) {
@@ -42,7 +112,6 @@ class TerminalWSServer {
       terminal = { pty, clients: new Set() };
       this._terminals.set(terminalId, terminal);
 
-      // Set up pty output broadcast ONCE when pty is created
       pty.onData((data) => {
         this._activity.recordOutput(terminalId);
         const msg = JSON.stringify({ type: 'output', data });
@@ -57,8 +126,7 @@ class TerminalWSServer {
     const { pty } = terminal;
     terminal.clients.add(ws);
 
-    // ws messages -> pty / control
-    ws.on('message', async (raw) => {
+    ws.on('message', (raw) => {
       let msg;
       try {
         msg = JSON.parse(raw.toString());
@@ -66,47 +134,22 @@ class TerminalWSServer {
         return;
       }
 
-      try {
-        switch (msg.type) {
-          case 'input':
-            pty.write(msg.data);
-            break;
-
-          case 'resize':
-            if (
-              typeof msg.cols === 'number' && typeof msg.rows === 'number' &&
-              msg.cols > 0 && msg.rows > 0 &&
-              msg.cols <= 500 && msg.rows <= 200
-            ) {
-              pty.resize(msg.cols, msg.rows);
-            }
-            break;
-
-          case 'create_ephemeral': {
-            await this._sessionManager.createEphemeral(msg.name);
-            this._broadcastSessions();
-            break;
+      switch (msg.type) {
+        case 'input':
+          pty.write(msg.data);
+          break;
+        case 'resize':
+          if (
+            typeof msg.cols === 'number' && typeof msg.rows === 'number' &&
+            msg.cols > 0 && msg.rows > 0 &&
+            msg.cols <= 500 && msg.rows <= 200
+          ) {
+            pty.resize(msg.cols, msg.rows);
           }
-
-          case 'destroy_ephemeral': {
-            if (!msg.id || !msg.id.startsWith('ephemeral-')) {
-              ws.send(JSON.stringify({ type: 'error', message: 'Can only destroy ephemeral sessions' }));
-              break;
-            }
-            await this._sessionManager.destroySession(msg.id);
-            this._broadcastSessions();
-            break;
-          }
-        }
-      } catch (err) {
-        console.error('WebSocket message handler error:', err);
-        try {
-          ws.send(JSON.stringify({ type: 'error', message: err.message || 'Internal error' }));
-        } catch {}
+          break;
       }
     });
 
-    // Cleanup on disconnect
     ws.on('close', () => {
       terminal.clients.delete(ws);
       if (terminal.clients.size === 0) {
@@ -118,33 +161,11 @@ class TerminalWSServer {
     });
   }
 
-  async _broadcastSessions() {
-    const sessions = await this._sessionManager.listSessions();
-    const msg = JSON.stringify({ type: 'sessions', sessions });
-
-    for (const [, terminal] of this._terminals) {
-      for (const ws of terminal.clients) {
-        if (ws.readyState === ws.OPEN) {
-          ws.send(msg);
-        }
-      }
-    }
-  }
-
-  broadcastConfigReload(config) {
-    const msg = JSON.stringify({ type: 'config_reload', config });
-    for (const [, terminal] of this._terminals) {
-      for (const ws of terminal.clients) {
-        if (ws.readyState === ws.OPEN) {
-          ws.send(msg);
-        }
-      }
-    }
-  }
+  // --- Activity broadcasting ---
 
   startActivityBroadcasting() {
     this._activity.startBroadcasting((msg) => {
-      this._broadcastToAll(msg);
+      this._sendToControl(msg);
     });
   }
 
@@ -152,19 +173,16 @@ class TerminalWSServer {
     this._activity.stopBroadcasting();
   }
 
-  _broadcastToAll(msg) {
-    const data = JSON.stringify(msg);
-    for (const [, terminal] of this._terminals) {
-      for (const ws of terminal.clients) {
-        if (ws.readyState === ws.OPEN) {
-          ws.send(data);
-        }
-      }
-    }
-  }
+  // --- Cleanup ---
 
   closeAll() {
     this._activity.stopBroadcasting();
+
+    for (const ws of this._controlClients) {
+      ws.close(1001, 'Server shutting down');
+    }
+    this._controlClients.clear();
+
     for (const [, terminal] of this._terminals) {
       for (const ws of terminal.clients) {
         ws.close(1001, 'Server shutting down');
@@ -172,7 +190,9 @@ class TerminalWSServer {
       try { terminal.pty.kill(); } catch {}
     }
     this._terminals.clear();
-    this._wss.close();
+
+    this._terminalWss.close();
+    this._controlWss.close();
   }
 }
 

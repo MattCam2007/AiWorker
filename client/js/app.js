@@ -8,22 +8,26 @@
     this._connections = {};
     this._engine = null;
     this._statusEl = null;
+    this._controlWs = null;
   }
 
   App.prototype.init = function () {
     var self = this;
+
+    // Fetch config for theme, then load sessions and set up UI
     return fetch('/api/config')
-      .then(function (res) {
-        return res.json();
-      })
+      .then(function (res) { return res.json(); })
       .then(function (config) {
         self._config = config;
         self._applyTheme(config.settings.theme);
-        self._createConnections(config);
         self._createEngine();
-        self._buildHeader(config);
-        self._applyDefaultLayout(config);
-        self._wireEphemeralDialog();
+        self._buildHeader();
+        self._wireCreateDialog();
+        self._connectControl();
+
+        return self._loadSessions();
+      })
+      .then(function () {
         self._updateStatus();
       });
   };
@@ -37,53 +41,20 @@
     if (theme.fontSize) root.style.setProperty('--td-font-size', theme.fontSize + 'px');
   };
 
-  App.prototype._createConnections = function (config) {
-    var self = this;
-    config.terminals.forEach(function (term) {
-      var conn = new ns.TerminalConnection(term.id, {
-        name: term.name,
-        theme: config.settings.theme
-      });
-
-      // Wire callbacks
-      conn._onActivity = function (id) {
-        self._onActivity(id);
-      };
-      conn._onStatusChange = function () {
-        self._updateStatus();
-      };
-      conn._onSessions = function (sessions) {
-        self._handleSessionsUpdate(sessions);
-      };
-      conn._onConfigReload = function (newConfig) {
-        self._handleConfigReload(newConfig);
-      };
-      conn._onActivityBroadcast = function (msg) {
-        self._handleActivity(msg);
-      };
-
-      self._connections[term.id] = conn;
-    });
-  };
-
   App.prototype._createEngine = function () {
     var grid = document.getElementById('grid-container');
     var strip = document.getElementById('minimized-strip');
     this._engine = new ns.LayoutEngine(grid, strip);
+    this._engine.setGrid('2x2');
   };
 
-  App.prototype._buildHeader = function (config) {
+  App.prototype._buildHeader = function () {
     var self = this;
     var presetsContainer = document.getElementById('grid-presets');
-    var namedContainer = document.getElementById('named-layouts');
+    if (!presetsContainer) return;
 
-    if (!presetsContainer || !namedContainer) return;
-
-    // Clear existing
     presetsContainer.innerHTML = '';
-    namedContainer.innerHTML = '';
 
-    // Grid preset buttons
     var presets = Object.keys(ns.LayoutEngine.GRID_PRESETS);
     presets.forEach(function (spec) {
       var btn = document.createElement('button');
@@ -96,21 +67,6 @@
       });
       presetsContainer.appendChild(btn);
     });
-
-    // Named layout buttons
-    if (config.layouts) {
-      Object.keys(config.layouts).forEach(function (name) {
-        var btn = document.createElement('button');
-        btn.className = 'layout-btn';
-        btn.textContent = name;
-        btn.dataset.layout = name;
-        btn.addEventListener('click', function () {
-          self._engine.applyLayout(config.layouts[name], self._connections);
-          self._setActiveLayout(btn, namedContainer);
-        });
-        namedContainer.appendChild(btn);
-      });
-    }
   };
 
   App.prototype._setActivePreset = function (activeBtn, container) {
@@ -120,22 +76,155 @@
     activeBtn.classList.add('active');
   };
 
-  App.prototype._setActiveLayout = function (activeBtn, container) {
-    container.querySelectorAll('.layout-btn').forEach(function (btn) {
-      btn.classList.remove('active');
+  // --- Control WebSocket ---
+
+  App.prototype._connectControl = function () {
+    var self = this;
+    var protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    var host = window.location.host || 'localhost:3000';
+    var url = protocol + '//' + host + '/ws/control';
+
+    this._controlWs = new WebSocket(url);
+
+    this._controlWs.addEventListener('message', function (event) {
+      var msg;
+      try {
+        msg = JSON.parse(event.data);
+      } catch (e) {
+        return;
+      }
+
+      switch (msg.type) {
+        case 'sessions':
+          self._handleSessionsUpdate(msg.sessions);
+          break;
+        case 'config_reload':
+          self._handleConfigReload(msg.config);
+          break;
+        case 'activity':
+          self._handleActivity(msg);
+          break;
+      }
     });
-    activeBtn.classList.add('active');
+
+    this._controlWs.addEventListener('close', function () {
+      // Reconnect after a short delay
+      setTimeout(function () {
+        self._connectControl();
+      }, 2000);
+    });
   };
 
-  App.prototype._applyDefaultLayout = function (config) {
-    var defaultName = config.settings.defaultLayout;
-    var layout = config.layouts[defaultName];
-    if (layout) {
-      this._engine.applyLayout(layout, this._connections);
+  App.prototype._sendCreateTerminal = function (name, command) {
+    if (this._controlWs && this._controlWs.readyState === WebSocket.OPEN) {
+      this._controlWs.send(
+        JSON.stringify({ type: 'create_terminal', name: name, command: command })
+      );
     }
   };
 
-  App.prototype._wireEphemeralDialog = function () {
+  App.prototype._sendDestroyTerminal = function (id) {
+    if (this._controlWs && this._controlWs.readyState === WebSocket.OPEN) {
+      this._controlWs.send(JSON.stringify({ type: 'destroy_terminal', id: id }));
+    }
+  };
+
+  // --- Session loading ---
+
+  App.prototype._loadSessions = function () {
+    var self = this;
+    return fetch('/api/sessions')
+      .then(function (res) { return res.json(); })
+      .then(function (sessions) {
+        self._applySessions(sessions);
+      });
+  };
+
+  App.prototype._applySessions = function (sessions) {
+    var self = this;
+    sessions.forEach(function (s) {
+      if (self._connections[s.id]) return;
+      var conn = self._createConnection(s.id, s.name);
+      self._connections[s.id] = conn;
+      self._assignToFirstEmptyCell(s.id, conn);
+    });
+    this._updateEmptyState();
+  };
+
+  App.prototype._createConnection = function (id, name) {
+    var self = this;
+    var conn = new ns.TerminalConnection(id, {
+      name: name,
+      theme: self._config.settings.theme
+    });
+
+    conn._onActivity = function (termId) {
+      self._onActivity(termId);
+    };
+    conn._onStatusChange = function () {
+      self._updateStatus();
+    };
+
+    return conn;
+  };
+
+  App.prototype._assignToFirstEmptyCell = function (id, conn) {
+    if (!this._engine) return;
+
+    // Try to find an empty grid cell
+    for (var i = 0; i < this._engine._cells.length; i++) {
+      var cell = this._engine._cells[i];
+      var info = this._engine._cellMap.get(cell);
+      if (info && !info.connection) {
+        this._engine.assignTerminal(cell, id, conn);
+        return;
+      }
+    }
+
+    // No empty cell — add to strip
+    this._engine._addToStrip(id, conn);
+  };
+
+  // --- Session updates from server ---
+
+  App.prototype._handleSessionsUpdate = function (sessions) {
+    var self = this;
+    var currentIds = new Set(Object.keys(this._connections));
+    var serverIds = new Set(sessions.map(function (s) { return s.id; }));
+
+    // Create connections for new sessions
+    sessions.forEach(function (s) {
+      if (!currentIds.has(s.id)) {
+        var conn = self._createConnection(s.id, s.name);
+        self._connections[s.id] = conn;
+        self._assignToFirstEmptyCell(s.id, conn);
+      }
+    });
+
+    // Remove connections for gone sessions
+    currentIds.forEach(function (id) {
+      if (!serverIds.has(id)) {
+        self._connections[id].destroy();
+        if (self._engine) {
+          self._engine._removeFromGrid(id);
+          self._engine._removeFromStrip(id);
+        }
+        delete self._connections[id];
+      }
+    });
+
+    this._updateEmptyState();
+    this._updateStatus();
+  };
+
+  App.prototype._handleConfigReload = function (newConfig) {
+    this._config = newConfig;
+    this._applyTheme(newConfig.settings.theme);
+  };
+
+  // --- Create terminal dialog ---
+
+  App.prototype._wireCreateDialog = function () {
     var self = this;
     var addBtn = document.getElementById('add-terminal-btn');
     var dialog = document.getElementById('ephemeral-dialog');
@@ -157,7 +246,7 @@
         var command = cmdInput ? cmdInput.value.trim() : '';
         if (!name) return;
 
-        self._sendEphemeralCreate(name, command);
+        self._sendCreateTerminal(name, command);
         dialog.classList.add('hidden');
         if (nameInput) nameInput.value = '';
         if (cmdInput) cmdInput.value = '';
@@ -171,113 +260,26 @@
     }
   };
 
-  App.prototype._sendEphemeralCreate = function (name, command) {
-    // Send via any active connection's WS
-    var keys = Object.keys(this._connections);
-    for (var i = 0; i < keys.length; i++) {
-      var conn = this._connections[keys[i]];
-      if (conn._ws && conn._ws.readyState === WebSocket.OPEN) {
-        conn._ws.send(
-          JSON.stringify({ type: 'create_ephemeral', name: name, command: command })
-        );
-        return;
-      }
+  // --- Empty state ---
+
+  App.prototype._updateEmptyState = function () {
+    var grid = document.getElementById('grid-container');
+    if (!grid) return;
+
+    var existing = grid.querySelector('.empty-state');
+    var hasConnections = Object.keys(this._connections).length > 0;
+
+    if (!hasConnections && !existing) {
+      var msg = document.createElement('div');
+      msg.className = 'empty-state';
+      msg.textContent = 'No terminals. Click + to create one.';
+      grid.appendChild(msg);
+    } else if (hasConnections && existing) {
+      existing.remove();
     }
   };
 
-  App.prototype._sendEphemeralDestroy = function (id) {
-    var keys = Object.keys(this._connections);
-    for (var i = 0; i < keys.length; i++) {
-      var conn = this._connections[keys[i]];
-      if (conn._ws && conn._ws.readyState === WebSocket.OPEN) {
-        conn._ws.send(JSON.stringify({ type: 'destroy_ephemeral', id: id }));
-        return;
-      }
-    }
-  };
-
-  App.prototype._handleSessionsUpdate = function (sessions) {
-    var self = this;
-    var currentIds = new Set(Object.keys(this._connections));
-    var serverIds = new Set(sessions.map(function (s) { return s.id; }));
-
-    // Create connections for new sessions
-    sessions.forEach(function (s) {
-      if (!currentIds.has(s.id)) {
-        var conn = new ns.TerminalConnection(s.id, {
-          name: s.name,
-          theme: self._config.settings.theme,
-          ephemeral: true
-        });
-        conn._onStatusChange = function () {
-          self._updateStatus();
-        };
-        conn._onSessions = function (sess) {
-          self._handleSessionsUpdate(sess);
-        };
-        self._connections[s.id] = conn;
-
-        // Add to strip
-        if (self._engine) {
-          self._engine._addToStrip(s.id, conn);
-        }
-      }
-    });
-
-    // Remove connections for gone sessions
-    currentIds.forEach(function (id) {
-      if (!serverIds.has(id) && self._connections[id].config.ephemeral) {
-        self._connections[id].destroy();
-        if (self._engine) {
-          self._engine._removeFromStrip(id);
-        }
-        delete self._connections[id];
-      }
-    });
-
-    this._updateStatus();
-  };
-
-  App.prototype._handleConfigReload = function (newConfig) {
-    var self = this;
-    var oldIds = new Set(Object.keys(this._connections));
-    var newIds = new Set(newConfig.terminals.map(function (t) { return t.id; }));
-
-    // Remove terminals no longer in config (non-ephemeral only)
-    oldIds.forEach(function (id) {
-      if (!newIds.has(id) && !(self._connections[id].config && self._connections[id].config.ephemeral)) {
-        self._connections[id].destroy();
-        if (self._engine) {
-          self._engine._removeFromStrip(id);
-        }
-        delete self._connections[id];
-      }
-    });
-
-    // Add newly configured terminals
-    newConfig.terminals.forEach(function (term) {
-      if (!self._connections[term.id]) {
-        var conn = new ns.TerminalConnection(term.id, {
-          name: term.name,
-          theme: newConfig.settings.theme
-        });
-        conn._onActivity = function (id) { self._onActivity(id); };
-        conn._onStatusChange = function () { self._updateStatus(); };
-        conn._onSessions = function (sessions) { self._handleSessionsUpdate(sessions); };
-        conn._onConfigReload = function (cfg) { self._handleConfigReload(cfg); };
-        conn._onActivityBroadcast = function (msg) { self._handleActivity(msg); };
-        self._connections[term.id] = conn;
-        if (self._engine) {
-          self._engine._addToStrip(term.id, conn);
-        }
-      }
-    });
-
-    this._config = newConfig;
-    this._applyTheme(newConfig.settings.theme);
-    this._buildHeader(newConfig);
-    this._updateStatus();
-  };
+  // --- Activity ---
 
   App.prototype._handleActivity = function (activityMsg) {
     var self = this;
@@ -286,7 +288,6 @@
     Object.keys(statuses).forEach(function (id) {
       var active = statuses[id];
 
-      // Update strip status dots
       if (self._engine && self._engine._stripItems.has(id)) {
         var entry = self._engine._stripItems.get(id);
         var dot = entry.element.querySelector('.strip-status');
@@ -300,7 +301,6 @@
           }
         }
 
-        // Trigger pulse animation on transition to active
         if (active) {
           entry.element.classList.add('strip-item-active');
           setTimeout(function () {
@@ -312,7 +312,6 @@
   };
 
   App.prototype._onActivity = function (id) {
-    // Update strip preview if terminal is minimized
     if (this._engine && this._engine._stripItems.has(id)) {
       var entry = this._engine._stripItems.get(id);
       var preview = entry.element.querySelector('.strip-preview');
@@ -325,6 +324,8 @@
       }, 600);
     }
   };
+
+  // --- Status indicator ---
 
   App.prototype._updateStatus = function () {
     this._statusEl = this._statusEl || document.getElementById('connection-status');
