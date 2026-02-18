@@ -43,7 +43,7 @@ class SessionManager {
           id,
           name: id,
           command: this._config.settings.shell || '/bin/bash',
-          workingDir: '/home'
+          workingDir: '/workspace'
         });
       }
     }
@@ -54,13 +54,13 @@ class SessionManager {
     const shell = command || this._config.settings.shell || '/bin/bash';
     const tmuxName = this._tmuxSessionName(id);
 
-    await execFileAsync('tmux', ['new-session', '-d', '-s', tmuxName, shell]);
+    await execFileAsync('tmux', ['new-session', '-d', '-s', tmuxName, '-c', '/workspace', shell]);
 
     this._sessions.set(id, {
       id,
       name: name || id,
       command: shell,
-      workingDir: '/home'
+      workingDir: '/workspace'
     });
 
     return { id, name: name || id };

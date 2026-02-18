@@ -9,6 +9,7 @@
     this._engine = null;
     this._statusEl = null;
     this._controlWs = null;
+    this._fileTree = null;
   }
 
   App.prototype.init = function () {
@@ -23,6 +24,8 @@
         self._createEngine();
         self._buildHeader();
         self._wireCreateDialog();
+        self._initFileTree();
+        self._wireSidebarToggle();
         self._connectControl();
 
         return self._loadSessions();
@@ -345,6 +348,54 @@
     } else {
       this._statusEl.classList.add('status-red');
     }
+  };
+
+  // --- File tree sidebar ---
+
+  App.prototype._initFileTree = function () {
+    var self = this;
+    var container = document.getElementById('file-tree');
+    if (!container || !ns.FileTree) return;
+
+    this._fileTree = new ns.FileTree(container, {
+      onFileClick: function (filePath, fileName) {
+        self._openFileInEditor(filePath, fileName);
+      }
+    });
+    this._fileTree.init();
+  };
+
+  App.prototype._wireSidebarToggle = function () {
+    var self = this;
+    var sidebar = document.getElementById('sidebar');
+    var toggleBtn = document.getElementById('sidebar-toggle-btn');
+    var closeBtn = document.getElementById('sidebar-close-btn');
+
+    if (!sidebar || !toggleBtn) return;
+
+    function toggle() {
+      sidebar.classList.toggle('hidden');
+      // Refit terminals after sidebar animation completes
+      setTimeout(function () {
+        if (self._engine) {
+          self._engine._cells.forEach(function (cell) {
+            var info = self._engine._cellMap.get(cell);
+            if (info && info.connection && info.connection.fit) {
+              info.connection.fit();
+            }
+          });
+        }
+      }, 250);
+    }
+
+    toggleBtn.addEventListener('click', toggle);
+    if (closeBtn) {
+      closeBtn.addEventListener('click', toggle);
+    }
+  };
+
+  App.prototype._openFileInEditor = function (filePath, fileName) {
+    this._sendCreateTerminal(fileName, 'vi /workspace/' + filePath);
   };
 
   ns.App = App;

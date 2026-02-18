@@ -8,17 +8,30 @@
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-  <header id="header">
-    <span class="title">TerminalDeck</span>
-    <div id="grid-presets"></div>
-    <div class="spacer"></div>
-    <button id="add-terminal-btn">+</button>
-    <div id="connection-status" class="status-indicator"></div>
-  </header>
+  <aside id="sidebar" class="sidebar hidden">
+    <div class="sidebar-header">
+      <span class="sidebar-title">Files</span>
+      <button id="sidebar-close-btn" class="sidebar-close">&times;</button>
+    </div>
+    <div id="file-tree"></div>
+  </aside>
 
-  <main id="grid-container"></main>
+  <div id="main-content">
+    <header id="header">
+      <button id="sidebar-toggle-btn" class="sidebar-toggle" title="Toggle file tree">
+        <span class="hamburger-icon"></span>
+      </button>
+      <span class="title">TerminalDeck</span>
+      <div id="grid-presets"></div>
+      <div class="spacer"></div>
+      <button id="add-terminal-btn">+</button>
+      <div id="connection-status" class="status-indicator"></div>
+    </header>
 
-  <div id="minimized-strip"></div>
+    <main id="grid-container"></main>
+
+    <div id="minimized-strip"></div>
+  </div>
 
   <div id="fullscreen-overlay" class="hidden">
     <button class="fullscreen-close"></button>
@@ -36,6 +49,7 @@
   <script src="vendor/xterm-addon-fit.js"></script>
   <script src="js/terminal.js"></script>
   <script src="js/layout.js"></script>
+  <script src="js/filetree.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

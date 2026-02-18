@@ -4,6 +4,7 @@ const path = require('path');
 const { ConfigManager } = require('./config');
 const { SessionManager } = require('./sessions');
 const { TerminalWSServer } = require('./websocket');
+const { listDirectory } = require('./filetree');
 
 const MIME_TYPES = {
   '.html': 'text/html',
@@ -74,6 +75,24 @@ async function createApp(options = {}) {
       }).catch((err) => {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Failed to list sessions' }));
+      });
+      return;
+    }
+
+    if (req.method === 'GET' && req.url.startsWith('/api/files')) {
+      const url = new URL(req.url, 'http://localhost');
+      const dirPath = url.searchParams.get('path') || '.';
+      listDirectory(dirPath).then(function (entries) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(entries));
+      }).catch(function (err) {
+        if (err.code === 'TRAVERSAL') {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Forbidden' }));
+        } else {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Failed to list directory' }));
+        }
       });
       return;
     }
