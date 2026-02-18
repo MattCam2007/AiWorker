@@ -1,5 +1,9 @@
-const { execSync, exec } = require('child_process');
+const { execFile } = require('child_process');
+const util = require('util');
+const { randomUUID } = require('crypto');
 const pty = require('node-pty');
+
+const execFileAsync = util.promisify(execFile);
 
 class SessionManager {
   constructor(config) {
@@ -11,9 +15,9 @@ class SessionManager {
     return `terminaldeck-${id}`;
   }
 
-  _tmuxSessionExists(id) {
+  async _tmuxSessionExists(id) {
     try {
-      execSync(`tmux has-session -t "${this._tmuxSessionName(id)}" 2>/dev/null`);
+      await execFileAsync('tmux', ['has-session', '-t', this._tmuxSessionName(id)]);
       return true;
     } catch {
       return false;
@@ -26,11 +30,8 @@ class SessionManager {
     const shell = command || this._config.settings.shell || '/bin/bash';
     const cwd = workingDir || '/home';
 
-    if (!this._tmuxSessionExists(id)) {
-      execSync(
-        `tmux new-session -d -s "${tmuxName}" -c "${cwd}" "${shell}"`,
-        { stdio: 'ignore' }
-      );
+    if (!(await this._tmuxSessionExists(id))) {
+      await execFileAsync('tmux', ['new-session', '-d', '-s', tmuxName, '-c', cwd, shell]);
     }
 
     this._sessions.set(id, {
@@ -42,9 +43,9 @@ class SessionManager {
     });
   }
 
-  attachSession(id) {
+  async attachSession(id) {
     const tmuxName = this._tmuxSessionName(id);
-    if (!this._tmuxSessionExists(id)) {
+    if (!(await this._tmuxSessionExists(id))) {
       throw new Error(`No tmux session found for terminal: ${id}`);
     }
 
@@ -61,7 +62,7 @@ class SessionManager {
   async destroySession(id) {
     const tmuxName = this._tmuxSessionName(id);
     try {
-      execSync(`tmux kill-session -t "${tmuxName}" 2>/dev/null`);
+      await execFileAsync('tmux', ['kill-session', '-t', tmuxName]);
     } catch {}
     this._sessions.delete(id);
   }
@@ -72,7 +73,7 @@ class SessionManager {
       result.push({
         id,
         name: session.name,
-        active: this._tmuxSessionExists(id),
+        active: await this._tmuxSessionExists(id),
         ephemeral: session.ephemeral
       });
     }
@@ -87,11 +88,11 @@ class SessionManager {
   }
 
   async createEphemeral(name, command) {
-    const id = `ephemeral-${Date.now()}`;
+    const id = `ephemeral-${randomUUID()}`;
     const shell = command || this._config.settings.shell || '/bin/bash';
     const tmuxName = this._tmuxSessionName(id);
 
-    execSync(`tmux new-session -d -s "${tmuxName}" "${shell}"`, { stdio: 'ignore' });
+    await execFileAsync('tmux', ['new-session', '-d', '-s', tmuxName, shell]);
 
     this._sessions.set(id, {
       id,
@@ -110,18 +111,18 @@ class SessionManager {
         .filter(([, s]) => !s.ephemeral)
         .map(([id]) => id)
     );
-    const newTerminals = newConfig.terminals.filter((t) => t.autoStart);
-    const newIds = new Set(newTerminals.map((t) => t.id));
+    const allNewIds = new Set(newConfig.terminals.map((t) => t.id));
+    const autoStartTerminals = newConfig.terminals.filter((t) => t.autoStart);
 
     // Remove sessions no longer in config
     for (const id of oldIds) {
-      if (!newIds.has(id)) {
+      if (!allNewIds.has(id)) {
         await this.destroySession(id);
       }
     }
 
-    // Add new sessions
-    for (const terminal of newTerminals) {
+    // Add new sessions (only autoStart)
+    for (const terminal of autoStartTerminals) {
       if (!this._sessions.has(terminal.id)) {
         await this.createSession(terminal);
       }

@@ -5,9 +5,7 @@ services:
       - "3000:3000"
     volumes:
       - ./config:/app/config
-      - workspace:/workspace
+      # Mount your project directory to /workspace for terminal access
+      - .:/workspace
     environment:
       - TERMINALDECK_PORT=3000
-
-volumes:
-  workspace:

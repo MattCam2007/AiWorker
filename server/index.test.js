@@ -91,6 +91,20 @@ describe('HTTP Server', function () {
       const sessions = JSON.parse(res.body);
       expect(sessions).to.be.an('array');
     });
+
+    it('GET /api/sessions returns 500 when listSessions fails', async () => {
+      const original = app.sessionManager.listSessions;
+      app.sessionManager.listSessions = () => Promise.reject(new Error('db down'));
+      try {
+        const res = await request(app.port, '/api/sessions');
+        expect(res.status).to.equal(500);
+        expect(res.headers['content-type']).to.include('application/json');
+        const body = JSON.parse(res.body);
+        expect(body).to.have.property('error', 'Failed to list sessions');
+      } finally {
+        app.sessionManager.listSessions = original;
+      }
+    });
   });
 
   describe('server binding', () => {

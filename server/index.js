@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const { ConfigManager } = require('./config');
 const { SessionManager } = require('./sessions');
-const { WebSocketServer: TerminalWSServer } = require('./websocket');
+const { TerminalWSServer } = require('./websocket');
 
 const MIME_TYPES = {
   '.html': 'text/html',
@@ -30,7 +30,7 @@ function serveStatic(req, res) {
   const fullPath = path.join(CLIENT_DIR, safePath);
 
   // Ensure we're still within CLIENT_DIR
-  if (!fullPath.startsWith(CLIENT_DIR)) {
+  if (!fullPath.startsWith(CLIENT_DIR + path.sep)) {
     res.writeHead(403);
     res.end('Forbidden');
     return;
@@ -71,6 +71,9 @@ async function createApp(options = {}) {
       sessionManager.listSessions().then((sessions) => {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(sessions));
+      }).catch((err) => {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Failed to list sessions' }));
       });
       return;
     }
@@ -103,6 +106,7 @@ async function createApp(options = {}) {
     close() {
       return new Promise((resolve) => {
         configManager.stopWatching();
+        wsServer.closeAll();
         server.close(resolve);
       });
     }
@@ -113,6 +117,15 @@ async function createApp(options = {}) {
 if (require.main === module) {
   createApp().then((app) => {
     console.log(`TerminalDeck running on http://localhost:${app.port}`);
+
+    const shutdown = async () => {
+      console.log('Shutting down...');
+      await app.close();
+      process.exit(0);
+    };
+
+    process.on('SIGTERM', shutdown);
+    process.on('SIGINT', shutdown);
   }).catch((err) => {
     console.error('Failed to start TerminalDeck:', err);
     process.exit(1);

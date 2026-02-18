@@ -107,7 +107,7 @@ describe('SessionManager', function () {
     it('returns a pty instance attached to the tmux session', async () => {
       const mgr = new SessionManager(testConfig);
       await mgr.createSession(testConfig.terminals[0]);
-      const pty = mgr.attachSession('test1');
+      const pty = await mgr.attachSession('test1');
       expect(pty).to.have.property('write');
       expect(pty).to.have.property('onData');
       pty.kill();

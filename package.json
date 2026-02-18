@@ -8,11 +8,12 @@
     "test": "mocha --recursive 'server/**/*.test.js' 'client/**/*.test.js' --exit"
   },
   "dependencies": {
-    "node-pty": "^1.0.0",
+    "node-pty": "1.1.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {
     "chai": "^4.5.0",
+    "jsdom": "^28.1.0",
     "mocha": "^10.8.0",
     "sinon": "^19.0.0"
   }

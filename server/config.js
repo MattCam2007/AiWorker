@@ -13,6 +13,25 @@ const DEFAULT_SETTINGS = {
   defaultLayout: 'default'
 };
 
+function deepEqual(a, b) {
+  if (a === b) return true;
+  if (a == null || b == null) return false;
+  if (typeof a !== typeof b) return false;
+  if (typeof a !== 'object') return false;
+
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+
+  const keysA = Object.keys(a);
+  const keysB = Object.keys(b);
+  if (keysA.length !== keysB.length) return false;
+
+  for (const key of keysA) {
+    if (!Object.prototype.hasOwnProperty.call(b, key)) return false;
+    if (!deepEqual(a[key], b[key])) return false;
+  }
+  return true;
+}
+
 class ConfigManager extends EventEmitter {
   constructor(configPath) {
     super();
@@ -55,13 +74,13 @@ class ConfigManager extends EventEmitter {
           const oldConfig = this._config;
           const newConfig = this._loadAndValidate();
           this._config = newConfig;
-          if (JSON.stringify(oldConfig) !== JSON.stringify(this._config)) {
+          if (!deepEqual(oldConfig, this._config)) {
             this.emit('change', this._config);
           }
         } catch (err) {
           this.emit('error', err);
         }
-      }, 50);
+      }, 250);
     });
   }
 
