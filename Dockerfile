@@ -34,6 +34,9 @@ RUN curl -fsSL https://claude.ai/install.sh | bash
 ENV PATH="/root/.claude/local/bin:${PATH}"
 ENV DISABLE_AUTOUPDATER=1
 
+# Shell prompt and color configuration
+COPY config/.bashrc /root/.bashrc
+
 # Create default directories
 RUN mkdir -p /workspace
 
