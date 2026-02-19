@@ -184,6 +184,12 @@
     }
   };
 
+  TerminalConnection.prototype.focus = function () {
+    if (this._terminal) {
+      this._terminal.focus();
+    }
+  };
+
   TerminalConnection.prototype.isActive = function () {
     return this._ws !== null && this._ws.readyState === WebSocket.OPEN;
   };

@@ -214,6 +214,7 @@
       requestAnimationFrame(function () {
         requestAnimationFrame(function () {
           connection.refit();
+          connection.focus();
         });
       });
     }
