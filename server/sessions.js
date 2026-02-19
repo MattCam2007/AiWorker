@@ -43,7 +43,9 @@ class SessionManager {
           id,
           name: id,
           command: this._config.settings.shell || '/bin/bash',
-          workingDir: '/workspace'
+          workingDir: '/workspace',
+          headerBg: null,
+          headerColor: null
         });
       }
     }
@@ -60,7 +62,9 @@ class SessionManager {
       id,
       name: name || id,
       command: shell,
-      workingDir: '/workspace'
+      workingDir: '/workspace',
+      headerBg: null,
+      headerColor: null
     });
 
     return { id, name: name || id };
@@ -92,6 +96,15 @@ class SessionManager {
     return ptyProcess;
   }
 
+  updateSession(id, updates) {
+    const session = this._sessions.get(id);
+    if (!session) return false;
+    if (updates.name !== undefined) session.name = updates.name;
+    if (updates.headerBg !== undefined) session.headerBg = updates.headerBg;
+    if (updates.headerColor !== undefined) session.headerColor = updates.headerColor;
+    return true;
+  }
+
   async destroySession(id) {
     const tmuxName = this._tmuxSessionName(id);
     try {
@@ -114,7 +127,9 @@ class SessionManager {
       result.push({
         id,
         name: session.name,
-        active: activeTmuxSessions.has(this._tmuxSessionName(id))
+        active: activeTmuxSessions.has(this._tmuxSessionName(id)),
+        headerBg: session.headerBg,
+        headerColor: session.headerColor
       });
     }
     return result;

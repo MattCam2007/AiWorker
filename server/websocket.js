@@ -63,6 +63,16 @@ class TerminalWSServer {
             await this._broadcastSessions();
             break;
           }
+          case 'update_terminal': {
+            if (!msg.id) break;
+            var updates = {};
+            if (msg.name !== undefined) updates.name = msg.name;
+            if (msg.headerBg !== undefined) updates.headerBg = msg.headerBg;
+            if (msg.headerColor !== undefined) updates.headerColor = msg.headerColor;
+            this._sessionManager.updateSession(msg.id, updates);
+            await this._broadcastSessions();
+            break;
+          }
         }
       } catch (err) {
         console.error('Control WebSocket handler error:', err);

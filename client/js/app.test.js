@@ -117,6 +117,7 @@ describe('App', function () {
       this._addToStrip = sinon.stub();
       this._removeFromStrip = sinon.stub();
       this._removeFromGrid = sinon.stub();
+      this.updateHeader = sinon.stub();
     };
     window.TerminalDeck.LayoutEngine.GRID_PRESETS = {
       '1x1': { cols: 1, rows: 1 },
@@ -452,6 +453,64 @@ describe('App', function () {
       while (rafCallbacks.length > 0) { rafCallbacks.shift()(); }
 
       expect(app._engine.refitAll.callCount).to.be.greaterThan(callsBefore);
+    });
+  });
+
+  it('_sendUpdateTerminal sends update_terminal via control WS', function () {
+    var app = new App();
+    return app.init().then(function () {
+      return new Promise(function (resolve) { setTimeout(resolve, 10); });
+    }).then(function () {
+      app._sendUpdateTerminal('some-id', 'New Name', '#ff0000', '#ffffff');
+
+      var sent = app._controlWs._sent;
+      var msg = JSON.parse(sent[sent.length - 1]);
+      expect(msg.type).to.equal('update_terminal');
+      expect(msg.id).to.equal('some-id');
+      expect(msg.name).to.equal('New Name');
+      expect(msg.headerBg).to.equal('#ff0000');
+      expect(msg.headerColor).to.equal('#ffffff');
+    });
+  });
+
+  it('engine._onUpdateTerminal is wired to _sendUpdateTerminal', function () {
+    var app = new App();
+    return app.init().then(function () {
+      return new Promise(function (resolve) { setTimeout(resolve, 10); });
+    }).then(function () {
+      expect(app._engine._onUpdateTerminal).to.be.a('function');
+
+      app._engine._onUpdateTerminal('test-id', 'Name', '#000', '#fff');
+
+      var sent = app._controlWs._sent;
+      var msg = JSON.parse(sent[sent.length - 1]);
+      expect(msg.type).to.equal('update_terminal');
+      expect(msg.id).to.equal('test-id');
+    });
+  });
+
+  it('_handleSessionsUpdate() propagates name and color changes to existing sessions', function () {
+    var app = new App();
+    return app.init().then(function () {
+      var sessions = [
+        { id: 't1', name: 'Renamed', headerBg: '#ff0000', headerColor: '#ffffff' },
+        { id: 't2', name: 'Terminal 2' }
+      ];
+
+      app._handleSessionsUpdate(sessions);
+
+      expect(app._connections['t1'].config.name).to.equal('Renamed');
+      expect(app._connections['t1'].config.headerBg).to.equal('#ff0000');
+      expect(app._connections['t1'].config.headerColor).to.equal('#ffffff');
+    });
+  });
+
+  it('_createConnection() passes headerBg and headerColor to config', function () {
+    var app = new App();
+    return app.init().then(function () {
+      var conn = app._createConnection('test', 'Test', '#123456', '#abcdef');
+      expect(conn.config.headerBg).to.equal('#123456');
+      expect(conn.config.headerColor).to.equal('#abcdef');
     });
   });
 

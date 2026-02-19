@@ -27,6 +27,7 @@
     this._resizeObserver = null;
     this._onCloseTerminal = null;
     this._onMinimizeTerminal = null;
+    this._onUpdateTerminal = null;
     this._onLayoutChange = null;
 
     this._initResizeObserver();
@@ -179,6 +180,16 @@
 
     var self = this;
 
+    var editBtn = document.createElement('button');
+    editBtn.className = 'cell-header-edit';
+    editBtn.innerHTML = '&#x270E;';
+    editBtn.title = 'Edit';
+    editBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      self._showEditPopover(cell, terminalId, connection);
+    });
+    header.appendChild(editBtn);
+
     var minimizeBtn = document.createElement('button');
     minimizeBtn.className = 'cell-header-minimize';
     minimizeBtn.innerHTML = '&ndash;';
@@ -199,6 +210,14 @@
     header.appendChild(closeBtn);
 
     header.style.display = '';
+
+    // Apply stored header colors
+    if (connection.config.headerBg) {
+      header.style.background = connection.config.headerBg;
+    }
+    if (connection.config.headerColor) {
+      header.style.color = connection.config.headerColor;
+    }
 
     // Attach to mount point
     connection.attach(mount);
@@ -411,6 +430,212 @@
         }
       );
     }, 0);
+  };
+
+  LayoutEngine.prototype._showEditPopover = function (cell, terminalId, connection) {
+    // Remove existing popover
+    var existing = cell.querySelector('.cell-edit-popover');
+    if (existing) {
+      existing.remove();
+      return;
+    }
+
+    var header = cell.querySelector('.cell-header');
+    var origBg = header.style.background || '';
+    var origColor = header.style.color || '';
+
+    var popover = document.createElement('div');
+    popover.className = 'cell-edit-popover';
+
+    // Name input
+    var nameLabel = document.createElement('label');
+    nameLabel.className = 'edit-label';
+    nameLabel.textContent = 'Name';
+    popover.appendChild(nameLabel);
+
+    var nameInput = document.createElement('input');
+    nameInput.className = 'edit-name-input';
+    nameInput.type = 'text';
+    nameInput.value = connection.config.name || terminalId;
+    popover.appendChild(nameInput);
+
+    // Background color
+    var bgLabel = document.createElement('label');
+    bgLabel.className = 'edit-label';
+    bgLabel.textContent = 'Header Background';
+    popover.appendChild(bgLabel);
+
+    var selectedBg = connection.config.headerBg || null;
+    var bgSwatches = this._createColorSwatches(selectedBg, function (color) {
+      selectedBg = color;
+      header.style.background = color || '';
+    });
+    popover.appendChild(bgSwatches);
+
+    // Text color
+    var textLabel = document.createElement('label');
+    textLabel.className = 'edit-label';
+    textLabel.textContent = 'Header Text';
+    popover.appendChild(textLabel);
+
+    var selectedColor = connection.config.headerColor || null;
+    var textSwatches = this._createColorSwatches(selectedColor, function (color) {
+      selectedColor = color;
+      header.style.color = color || '';
+    });
+    popover.appendChild(textSwatches);
+
+    // Buttons
+    var btnRow = document.createElement('div');
+    btnRow.className = 'edit-btn-row';
+
+    var self = this;
+
+    function cleanup() {
+      popover.remove();
+      document.removeEventListener('click', closeEditPopover);
+    }
+
+    var cancelBtn = document.createElement('button');
+    cancelBtn.className = 'edit-cancel';
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      header.style.background = origBg;
+      header.style.color = origColor;
+      cleanup();
+      connection.focus();
+    });
+    btnRow.appendChild(cancelBtn);
+
+    var saveBtn = document.createElement('button');
+    saveBtn.className = 'edit-save';
+    saveBtn.textContent = 'Save';
+    saveBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      var newName = nameInput.value.trim() || terminalId;
+      if (self._onUpdateTerminal) {
+        self._onUpdateTerminal(terminalId, newName, selectedBg, selectedColor);
+      }
+      // Update header name immediately
+      var nameSpan = header.querySelector('.cell-header-name');
+      if (nameSpan) nameSpan.textContent = newName;
+      cleanup();
+      connection.focus();
+    });
+    btnRow.appendChild(saveBtn);
+
+    popover.appendChild(btnRow);
+    cell.appendChild(popover);
+
+    // Prevent clicks inside popover from propagating to cell
+    popover.addEventListener('click', function (e) {
+      e.stopPropagation();
+    });
+
+    // Prevent popover interaction from stealing terminal focus
+    popover.addEventListener('mousedown', function (e) {
+      if (e.target !== nameInput) {
+        e.preventDefault();
+      }
+    });
+
+    // Close on outside click
+    function closeEditPopover(e) {
+      if (!popover.contains(e.target) && e.target !== popover) {
+        header.style.background = origBg;
+        header.style.color = origColor;
+        cleanup();
+      }
+    }
+
+    setTimeout(function () {
+      if (typeof document === 'undefined') return;
+      document.addEventListener('click', closeEditPopover);
+    }, 0);
+  };
+
+  LayoutEngine.prototype._createColorSwatches = function (activeColor, onSelect) {
+    var colors = [
+      '#1a1a2e', '#16213e', '#0f3460', '#1b1b2f', '#162447',
+      '#1f4068', '#2d4059', '#3a3a5c', '#4a4a6a', '#2c3e50',
+      '#e94560', '#ff6b6b', '#ffa502', '#ffda79', '#33d9b2',
+      '#34ace0', '#706fd3', '#ff5252', '#2ed573', '#1e90ff'
+    ];
+
+    var container = document.createElement('div');
+    container.className = 'edit-swatches';
+
+    // "None" swatch
+    var noneSwatch = document.createElement('button');
+    noneSwatch.className = 'edit-swatch edit-swatch-none';
+    if (!activeColor) noneSwatch.classList.add('edit-swatch-active');
+    noneSwatch.title = 'None';
+    noneSwatch.addEventListener('click', function (e) {
+      e.stopPropagation();
+      container.querySelectorAll('.edit-swatch').forEach(function (s) {
+        s.classList.remove('edit-swatch-active');
+      });
+      noneSwatch.classList.add('edit-swatch-active');
+      onSelect(null);
+    });
+    container.appendChild(noneSwatch);
+
+    colors.forEach(function (color) {
+      var swatch = document.createElement('button');
+      swatch.className = 'edit-swatch';
+      swatch.style.background = color;
+      if (activeColor === color) swatch.classList.add('edit-swatch-active');
+      swatch.addEventListener('click', function (e) {
+        e.stopPropagation();
+        container.querySelectorAll('.edit-swatch').forEach(function (s) {
+          s.classList.remove('edit-swatch-active');
+        });
+        swatch.classList.add('edit-swatch-active');
+        onSelect(color);
+      });
+      container.appendChild(swatch);
+    });
+
+    // Native color picker
+    var native = document.createElement('input');
+    native.type = 'color';
+    native.className = 'edit-color-native';
+    native.value = activeColor || '#333333';
+    native.addEventListener('input', function (e) {
+      e.stopPropagation();
+      container.querySelectorAll('.edit-swatch').forEach(function (s) {
+        s.classList.remove('edit-swatch-active');
+      });
+      onSelect(native.value);
+    });
+    container.appendChild(native);
+
+    return container;
+  };
+
+  LayoutEngine.prototype.updateHeader = function (terminalId, name, headerBg, headerColor) {
+    var self = this;
+    // Update grid cell header
+    this._cells.forEach(function (cell) {
+      var info = self._cellMap.get(cell);
+      if (info && info.terminalId === terminalId) {
+        var header = cell.querySelector('.cell-header');
+        if (header) {
+          var nameSpan = header.querySelector('.cell-header-name');
+          if (nameSpan) nameSpan.textContent = name;
+          header.style.background = headerBg || '';
+          header.style.color = headerColor || '';
+        }
+      }
+    });
+
+    // Update strip item
+    var stripEntry = this._stripItems.get(terminalId);
+    if (stripEntry) {
+      var stripName = stripEntry.element.querySelector('.strip-name');
+      if (stripName) stripName.textContent = name;
+    }
   };
 
   LayoutEngine.prototype._clearHighlights = function () {

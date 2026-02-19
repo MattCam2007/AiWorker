@@ -161,5 +161,58 @@ describe('SessionManager', function () {
         expect(s).to.have.property('active');
       }
     });
+
+    it('returns headerBg and headerColor fields', async () => {
+      const mgr = new SessionManager(testConfig);
+      await mgr.createTerminal('Shell 1');
+      const sessions = await mgr.listSessions();
+      expect(sessions[0]).to.have.property('headerBg', null);
+      expect(sessions[0]).to.have.property('headerColor', null);
+    });
+
+    it('returns updated headerBg and headerColor after updateSession', async () => {
+      const mgr = new SessionManager(testConfig);
+      const result = await mgr.createTerminal('Shell 1');
+      mgr.updateSession(result.id, { headerBg: '#ff0000', headerColor: '#ffffff' });
+      const sessions = await mgr.listSessions();
+      expect(sessions[0].headerBg).to.equal('#ff0000');
+      expect(sessions[0].headerColor).to.equal('#ffffff');
+    });
+  });
+
+  describe('updateSession', () => {
+    it('updates session name', async () => {
+      const mgr = new SessionManager(testConfig);
+      const result = await mgr.createTerminal('Original');
+      const ok = mgr.updateSession(result.id, { name: 'Renamed' });
+      expect(ok).to.be.true;
+      const sessions = await mgr.listSessions();
+      expect(sessions[0].name).to.equal('Renamed');
+    });
+
+    it('updates headerBg and headerColor', async () => {
+      const mgr = new SessionManager(testConfig);
+      const result = await mgr.createTerminal('Test');
+      mgr.updateSession(result.id, { headerBg: '#1a1a2e', headerColor: '#e94560' });
+      const sessions = await mgr.listSessions();
+      expect(sessions[0].headerBg).to.equal('#1a1a2e');
+      expect(sessions[0].headerColor).to.equal('#e94560');
+    });
+
+    it('returns false for non-existent session', () => {
+      const mgr = new SessionManager(testConfig);
+      const ok = mgr.updateSession('nonexistent', { name: 'Foo' });
+      expect(ok).to.be.false;
+    });
+
+    it('only updates provided fields', async () => {
+      const mgr = new SessionManager(testConfig);
+      const result = await mgr.createTerminal('Original');
+      mgr.updateSession(result.id, { headerBg: '#123456' });
+      const sessions = await mgr.listSessions();
+      expect(sessions[0].name).to.equal('Original');
+      expect(sessions[0].headerBg).to.equal('#123456');
+      expect(sessions[0].headerColor).to.be.null;
+    });
   });
 });

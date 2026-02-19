@@ -58,6 +58,9 @@
     this._engine._onMinimizeTerminal = function () {
       self._syncTerminalList();
     };
+    this._engine._onUpdateTerminal = function (id, name, headerBg, headerColor) {
+      self._sendUpdateTerminal(id, name, headerBg, headerColor);
+    };
     this._engine._onLayoutChange = function () {
       self._syncTerminalList();
     };
@@ -145,6 +148,18 @@
     }
   };
 
+  App.prototype._sendUpdateTerminal = function (id, name, headerBg, headerColor) {
+    if (this._controlWs && this._controlWs.readyState === WebSocket.OPEN) {
+      this._controlWs.send(JSON.stringify({
+        type: 'update_terminal',
+        id: id,
+        name: name,
+        headerBg: headerBg,
+        headerColor: headerColor
+      }));
+    }
+  };
+
   // --- Session loading ---
 
   App.prototype._loadSessions = function () {
@@ -160,7 +175,7 @@
     var self = this;
     sessions.forEach(function (s) {
       if (self._connections[s.id]) return;
-      var conn = self._createConnection(s.id, s.name);
+      var conn = self._createConnection(s.id, s.name, s.headerBg, s.headerColor);
       self._connections[s.id] = conn;
       self._assignToFirstEmptyCell(s.id, conn);
     });
@@ -178,11 +193,13 @@
     }
   };
 
-  App.prototype._createConnection = function (id, name) {
+  App.prototype._createConnection = function (id, name, headerBg, headerColor) {
     var self = this;
     var conn = new ns.TerminalConnection(id, {
       name: name,
-      theme: self._config.settings.theme
+      theme: self._config.settings.theme,
+      headerBg: headerBg || null,
+      headerColor: headerColor || null
     });
 
     conn._onActivity = function (termId) {
@@ -219,12 +236,21 @@
     var currentIds = new Set(Object.keys(this._connections));
     var serverIds = new Set(sessions.map(function (s) { return s.id; }));
 
-    // Create connections for new sessions
+    // Create connections for new sessions, update existing ones
     sessions.forEach(function (s) {
       if (!currentIds.has(s.id)) {
-        var conn = self._createConnection(s.id, s.name);
+        var conn = self._createConnection(s.id, s.name, s.headerBg, s.headerColor);
         self._connections[s.id] = conn;
         self._assignToFirstEmptyCell(s.id, conn);
+      } else {
+        // Update existing connection config and header
+        var conn = self._connections[s.id];
+        conn.config.name = s.name;
+        conn.config.headerBg = s.headerBg || null;
+        conn.config.headerColor = s.headerColor || null;
+        if (self._engine) {
+          self._engine.updateHeader(s.id, s.name, s.headerBg, s.headerColor);
+        }
       }
     });
 

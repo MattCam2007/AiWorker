@@ -126,6 +126,32 @@ describe('TerminalWSServer', function () {
       ws.close();
     });
 
+    it('updates a terminal via update_terminal message', async () => {
+      const ws = await connectControlWS();
+
+      // Create first
+      const createPromise = waitForMessage(ws, (m) => m.type === 'sessions');
+      ws.send(JSON.stringify({ type: 'create_terminal', name: 'Original' }));
+      const createMsg = await createPromise;
+      const id = createMsg.sessions[0].id;
+
+      // Update
+      const updatePromise = waitForMessage(ws, (m) => m.type === 'sessions');
+      ws.send(JSON.stringify({
+        type: 'update_terminal',
+        id,
+        name: 'Renamed',
+        headerBg: '#ff0000',
+        headerColor: '#ffffff'
+      }));
+      const updateMsg = await updatePromise;
+      expect(updateMsg.sessions[0].name).to.equal('Renamed');
+      expect(updateMsg.sessions[0].headerBg).to.equal('#ff0000');
+      expect(updateMsg.sessions[0].headerColor).to.equal('#ffffff');
+
+      ws.close();
+    });
+
     it('destroy_terminal allows destroying any terminal', async () => {
       const ws = await connectControlWS();
 

@@ -12,6 +12,7 @@ describe('LayoutEngine', function () {
       attach: sinon.stub(),
       detach: sinon.stub(),
       refit: sinon.stub(),
+      focus: sinon.stub(),
       isActive: sinon.stub().returns(true),
       getLastOutput: sinon.stub().returns('')
     };
@@ -540,5 +541,159 @@ describe('LayoutEngine', function () {
     // the strip item click handler from firing
     expect(engine._swapSource).to.be.null;
     expect(closeSpy.calledOnce).to.be.true;
+  });
+
+  it('assignTerminal() shows edit button in header', function () {
+    var grid = document.getElementById('grid-container');
+    var strip = document.getElementById('minimized-strip');
+    var engine = new LayoutEngine(grid, strip);
+
+    engine.setGrid('1x1');
+    var cell = grid.querySelector('.grid-cell');
+    var conn = makeConnection('t1', 'Test');
+    engine.assignTerminal(cell, 't1', conn);
+
+    var editBtn = cell.querySelector('.cell-header-edit');
+    expect(editBtn).to.exist;
+  });
+
+  it('edit button click opens edit popover', function () {
+    var grid = document.getElementById('grid-container');
+    var strip = document.getElementById('minimized-strip');
+    var engine = new LayoutEngine(grid, strip);
+
+    engine.setGrid('1x1');
+    var cell = grid.querySelector('.grid-cell');
+    var conn = makeConnection('t1', 'Test');
+    engine.assignTerminal(cell, 't1', conn);
+
+    var editBtn = cell.querySelector('.cell-header-edit');
+    editBtn.click();
+
+    var popover = cell.querySelector('.cell-edit-popover');
+    expect(popover).to.exist;
+    expect(popover.querySelector('.edit-name-input')).to.exist;
+    expect(popover.querySelector('.edit-save')).to.exist;
+    expect(popover.querySelector('.edit-cancel')).to.exist;
+  });
+
+  it('edit popover save calls _onUpdateTerminal callback', function () {
+    var grid = document.getElementById('grid-container');
+    var strip = document.getElementById('minimized-strip');
+    var engine = new LayoutEngine(grid, strip);
+
+    var updateSpy = sinon.spy();
+    engine._onUpdateTerminal = updateSpy;
+
+    engine.setGrid('1x1');
+    var cell = grid.querySelector('.grid-cell');
+    var conn = makeConnection('t1', 'Test');
+    engine.assignTerminal(cell, 't1', conn);
+
+    var editBtn = cell.querySelector('.cell-header-edit');
+    editBtn.click();
+
+    var popover = cell.querySelector('.cell-edit-popover');
+    var nameInput = popover.querySelector('.edit-name-input');
+    nameInput.value = 'Renamed';
+
+    var saveBtn = popover.querySelector('.edit-save');
+    saveBtn.click();
+
+    expect(updateSpy.calledOnce).to.be.true;
+    expect(updateSpy.firstCall.args[0]).to.equal('t1');
+    expect(updateSpy.firstCall.args[1]).to.equal('Renamed');
+  });
+
+  it('edit popover cancel reverts header styles and removes popover', function () {
+    var grid = document.getElementById('grid-container');
+    var strip = document.getElementById('minimized-strip');
+    var engine = new LayoutEngine(grid, strip);
+
+    engine.setGrid('1x1');
+    var cell = grid.querySelector('.grid-cell');
+    var conn = makeConnection('t1', 'Test');
+    engine.assignTerminal(cell, 't1', conn);
+
+    var header = cell.querySelector('.cell-header');
+    var origBg = header.style.background;
+
+    var editBtn = cell.querySelector('.cell-header-edit');
+    editBtn.click();
+
+    var cancelBtn = cell.querySelector('.edit-cancel');
+    cancelBtn.click();
+
+    expect(cell.querySelector('.cell-edit-popover')).to.be.null;
+    expect(header.style.background).to.equal(origBg);
+  });
+
+  it('updateHeader() updates cell header name and colors', function () {
+    var grid = document.getElementById('grid-container');
+    var strip = document.getElementById('minimized-strip');
+    var engine = new LayoutEngine(grid, strip);
+
+    engine.setGrid('1x1');
+    var cell = grid.querySelector('.grid-cell');
+    var conn = makeConnection('t1', 'Original');
+    engine.assignTerminal(cell, 't1', conn);
+
+    engine.updateHeader('t1', 'Updated', '#ff0000', '#ffffff');
+
+    var header = cell.querySelector('.cell-header');
+    var nameSpan = header.querySelector('.cell-header-name');
+    expect(nameSpan.textContent).to.equal('Updated');
+    // JSDOM converts hex to rgb, so check the value is set (non-empty)
+    expect(header.style.background).to.not.equal('');
+    expect(header.style.color).to.not.equal('');
+  });
+
+  it('updateHeader() updates strip item name', function () {
+    var grid = document.getElementById('grid-container');
+    var strip = document.getElementById('minimized-strip');
+    var engine = new LayoutEngine(grid, strip);
+
+    engine.setGrid('1x1');
+    var conn = makeConnection('t1', 'Original');
+    engine._addToStrip('t1', conn);
+
+    engine.updateHeader('t1', 'Updated', null, null);
+
+    var stripName = strip.querySelector('.strip-name');
+    expect(stripName.textContent).to.equal('Updated');
+  });
+
+  it('assignTerminal() applies headerBg and headerColor from connection config', function () {
+    var grid = document.getElementById('grid-container');
+    var strip = document.getElementById('minimized-strip');
+    var engine = new LayoutEngine(grid, strip);
+
+    engine.setGrid('1x1');
+    var cell = grid.querySelector('.grid-cell');
+    var conn = makeConnection('t1', 'Test');
+    conn.config.headerBg = '#1a1a2e';
+    conn.config.headerColor = '#e94560';
+    engine.assignTerminal(cell, 't1', conn);
+
+    var header = cell.querySelector('.cell-header');
+    // JSDOM converts hex to rgb, so check the value is set (non-empty)
+    expect(header.style.background).to.not.equal('');
+    expect(header.style.color).to.not.equal('');
+  });
+
+  it('_createColorSwatches() returns container with swatches', function () {
+    var grid = document.getElementById('grid-container');
+    var strip = document.getElementById('minimized-strip');
+    var engine = new LayoutEngine(grid, strip);
+
+    var selectSpy = sinon.spy();
+    var container = engine._createColorSwatches(null, selectSpy);
+
+    expect(container.className).to.equal('edit-swatches');
+    // 1 none + 20 colors + 1 native input
+    var swatches = container.querySelectorAll('.edit-swatch');
+    expect(swatches.length).to.equal(21);
+    var nativeInput = container.querySelector('.edit-color-native');
+    expect(nativeInput).to.exist;
   });
 });
