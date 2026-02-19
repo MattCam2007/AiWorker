@@ -1,0 +1,34 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "Bash(tmux:*)",
+      "Bash(while read s)",
+      "Bash(do tmux kill-session -t \"$s\")",
+      "Bash(done)",
+      "Bash(git status:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "WebSearch",
+      "Bash(head:*)",
+      "WebFetch(domain:unpkg.com)",
+      "WebFetch(domain:cdn.jsdelivr.net)",
+      "WebFetch(domain:app.unpkg.com)",
+      "WebFetch(domain:github.com)",
+      "Bash(ls:*)",
+      "Bash(node:*)",
+      "Bash(npx mocha:*)",
+      "Bash(npm test:*)",
+      "Bash(du:*)",
+      "Bash(node_modules/.bin/mocha:*)",
+      "Bash(git config:*)",
+      "Bash(git -C /workspace/AiWorker status)",
+      "Bash(git -C /workspace/AiWorker diff)",
+      "Bash(git -C /workspace/AiWorker log --oneline -5)",
+      "Bash(git -C /workspace/AiWorker add:*)",
+      "Bash(git -C:*)",
+      "Bash(grep:*)"
+    ]
+  }
+}

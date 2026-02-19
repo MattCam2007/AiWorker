@@ -7,6 +7,9 @@ services:
     volumes:
       - ./config:/app/config
       - /home/matt/Projects:/workspace
+      - ~/.ssh:/home/matt/.ssh:ro
+      - ${SSH_AUTH_SOCK:-/dev/null}:/ssh-agent
     environment:
       - TERMINALDECK_PORT=3000
+      - SSH_AUTH_SOCK=/ssh-agent
     restart: unless-stopped

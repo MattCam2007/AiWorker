@@ -17,6 +17,9 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
+# Create non-root user matching host UID/GID
+RUN groupadd -g 1000 matt && useradd -u 1000 -g 1000 -m -s /bin/bash matt
+
 # Create app directory
 WORKDIR /app
 
@@ -29,16 +32,22 @@ COPY server/ ./server/
 COPY client/ ./client/
 COPY config/ ./config/
 
+# Make app readable by matt
+RUN chown -R matt:matt /app
+
+# Create default directories
+RUN mkdir -p /workspace && chown matt:matt /workspace
+
+# Switch to matt for Claude CLI install and runtime
+USER matt
+
 # Install Claude Code CLI (native binary — no Node.js dependency)
 RUN curl -fsSL https://claude.ai/install.sh | bash
-ENV PATH="/root/.claude/local/bin:${PATH}"
+ENV PATH="/home/matt/.claude/local/bin:${PATH}"
 ENV DISABLE_AUTOUPDATER=1
 
 # Shell prompt and color configuration
-COPY config/.bashrc /root/.bashrc
-
-# Create default directories
-RUN mkdir -p /workspace
+COPY --chown=matt:matt config/.bashrc /home/matt/.bashrc
 
 # Expose port
 EXPOSE 3000

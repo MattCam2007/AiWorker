@@ -65,4 +65,4 @@ alias la='ls -A'
 alias l='ls -CF'
 
 # Claude Code CLI
-export PATH="/root/.claude/local/bin:$PATH"
+export PATH="/home/matt/.claude/local/bin:$PATH"
