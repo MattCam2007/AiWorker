@@ -26,6 +26,8 @@
     this._fullscreenOrigCell = null;
     this._resizeObserver = null;
     this._onCloseTerminal = null;
+    this._onMinimizeTerminal = null;
+    this._onLayoutChange = null;
 
     this._initResizeObserver();
     this._initKeyboardListeners();
@@ -109,6 +111,8 @@
         });
       })(cell);
     }
+
+    if (this._onLayoutChange) this._onLayoutChange();
   };
 
   LayoutEngine.prototype.applyLayout = function (layoutConfig, connections) {
@@ -169,10 +173,25 @@
     nameSpan.textContent = name;
     header.appendChild(nameSpan);
 
+    var spacer = document.createElement('span');
+    spacer.className = 'cell-header-spacer';
+    header.appendChild(spacer);
+
+    var self = this;
+
+    var minimizeBtn = document.createElement('button');
+    minimizeBtn.className = 'cell-header-minimize';
+    minimizeBtn.innerHTML = '&ndash;';
+    minimizeBtn.title = 'Minimize';
+    minimizeBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      self.minimizeTerminal(terminalId);
+    });
+    header.appendChild(minimizeBtn);
+
     var closeBtn = document.createElement('button');
     closeBtn.className = 'cell-header-close';
     closeBtn.innerHTML = '&times;';
-    var self = this;
     closeBtn.addEventListener('click', function (e) {
       e.stopPropagation();
       if (self._onCloseTerminal) self._onCloseTerminal(terminalId);
@@ -197,6 +216,39 @@
           connection.refit();
         });
       });
+    }
+
+    if (this._onLayoutChange) this._onLayoutChange();
+  };
+
+  LayoutEngine.prototype.minimizeTerminal = function (terminalId) {
+    var self = this;
+    var found = false;
+    this._cells.forEach(function (cell) {
+      var info = self._cellMap.get(cell);
+      if (info && info.terminalId === terminalId) {
+        var conn = info.connection;
+        conn.detach();
+        // Clear the cell
+        info.connection = null;
+        info.terminalId = null;
+        cell.classList.add('cell-empty');
+        var header = cell.querySelector('.cell-header');
+        if (header) {
+          header.innerHTML = '';
+          header.style.display = 'none';
+        }
+        var mount = cell.querySelector('.cell-terminal');
+        if (mount) mount.innerHTML = '';
+        // Add to strip
+        self._addToStrip(terminalId, conn);
+        found = true;
+      }
+    });
+    if (found) {
+      this.refitAll();
+      if (this._onMinimizeTerminal) this._onMinimizeTerminal(terminalId);
+      if (this._onLayoutChange) this._onLayoutChange();
     }
   };
 

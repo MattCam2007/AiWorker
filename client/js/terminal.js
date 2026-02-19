@@ -53,6 +53,13 @@
     // Open terminal in element
     this._terminal.open(el);
 
+    // Safety-net: scroll wheel drives xterm scrollback directly
+    var term = this._terminal;
+    el.addEventListener('wheel', function (e) {
+      var delta = Math.round(e.deltaY / 30);
+      if (delta !== 0) term.scrollLines(delta);
+    }, { passive: true });
+
     // Defer fit() until the browser has completed a full rendering cycle.
     // A single requestAnimationFrame is NOT enough — rAF fires BEFORE the
     // browser paints, so the container geometry (flex/grid heights) may not

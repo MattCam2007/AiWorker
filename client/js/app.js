@@ -10,6 +10,7 @@
     this._statusEl = null;
     this._controlWs = null;
     this._fileTree = null;
+    this._terminalList = null;
   }
 
   App.prototype.init = function () {
@@ -25,6 +26,8 @@
         self._buildHeader();
         self._wireCreateDialog();
         self._initFileTree();
+        self._initTerminalList();
+        self._initSidebarSections();
         self._wireSidebarToggle();
         self._connectControl();
 
@@ -51,6 +54,12 @@
     this._engine = new ns.LayoutEngine(grid, strip);
     this._engine._onCloseTerminal = function (id) {
       self._sendDestroyTerminal(id);
+    };
+    this._engine._onMinimizeTerminal = function () {
+      self._syncTerminalList();
+    };
+    this._engine._onLayoutChange = function () {
+      self._syncTerminalList();
     };
     this._engine.setGrid('2x2');
   };
@@ -156,6 +165,7 @@
       self._assignToFirstEmptyCell(s.id, conn);
     });
     this._updateEmptyState();
+    this._syncTerminalList();
 
     // Refit after the browser completes a full rendering cycle.
     // Double-rAF ensures container geometry is finalized before measuring.
@@ -241,6 +251,7 @@
 
     this._updateEmptyState();
     this._updateStatus();
+    this._syncTerminalList();
   };
 
   App.prototype._handleConfigReload = function (newConfig) {
@@ -334,6 +345,11 @@
           }, 600);
         }
       }
+
+      // Update sidebar terminal list
+      if (self._terminalList) {
+        self._terminalList.updateActivity(id, active);
+      }
     });
   };
 
@@ -371,6 +387,113 @@
     } else {
       this._statusEl.classList.add('status-red');
     }
+  };
+
+  // --- Terminal list sidebar ---
+
+  App.prototype._initTerminalList = function () {
+    var container = document.getElementById('terminal-list');
+    if (!container || !ns.TerminalList) return;
+
+    var self = this;
+    this._terminalList = new ns.TerminalList(container);
+
+    this._terminalList.onMinimize = function (id) {
+      if (self._engine) self._engine.minimizeTerminal(id);
+    };
+
+    this._terminalList.onClose = function (id) {
+      self._sendDestroyTerminal(id);
+    };
+
+    this._terminalList.onSelect = function (id) {
+      self._handleTerminalListSelect(id);
+    };
+  };
+
+  App.prototype._initSidebarSections = function () {
+    var headers = document.querySelectorAll('.section-header');
+    headers.forEach(function (header) {
+      header.addEventListener('click', function () {
+        var content = header.nextElementSibling;
+        if (content) content.classList.toggle('collapsed');
+        header.classList.toggle('collapsed');
+      });
+    });
+  };
+
+  App.prototype._syncTerminalList = function () {
+    if (!this._terminalList || !this._engine) return;
+
+    var self = this;
+    var ids = Object.keys(this._connections);
+
+    // Build a set of IDs currently in the list
+    var listed = new Set(this._terminalList._items.keys());
+
+    ids.forEach(function (id) {
+      var conn = self._connections[id];
+      var name = conn.config.name || id;
+      var location = 'Minimized';
+      var active = conn.isActive();
+
+      // Check if it's in a grid cell
+      for (var i = 0; i < self._engine._cells.length; i++) {
+        var cell = self._engine._cells[i];
+        var info = self._engine._cellMap.get(cell);
+        if (info && info.terminalId === id) {
+          location = 'Cell ' + (i + 1);
+          break;
+        }
+      }
+
+      self._terminalList.upsert(id, name, location, active);
+      listed.delete(id);
+    });
+
+    // Remove stale entries
+    listed.forEach(function (id) {
+      self._terminalList.remove(id);
+    });
+  };
+
+  App.prototype._handleTerminalListSelect = function (id) {
+    if (!this._engine) return;
+
+    // Check if terminal is in a grid cell
+    for (var i = 0; i < this._engine._cells.length; i++) {
+      var cell = this._engine._cells[i];
+      var info = this._engine._cellMap.get(cell);
+      if (info && info.terminalId === id) {
+        this._highlightCell(cell);
+        return;
+      }
+    }
+
+    // Terminal is minimized — restore to first empty cell
+    var conn = this._connections[id];
+    if (!conn) return;
+
+    for (var j = 0; j < this._engine._cells.length; j++) {
+      var emptyCell = this._engine._cells[j];
+      var emptyInfo = this._engine._cellMap.get(emptyCell);
+      if (emptyInfo && !emptyInfo.connection) {
+        this._engine._removeFromStrip(id);
+        this._engine.assignTerminal(emptyCell, id, conn);
+        conn.refit();
+        return;
+      }
+    }
+  };
+
+  App.prototype._highlightCell = function (cell) {
+    cell.classList.remove('cell-highlight');
+    // Force reflow to restart animation
+    void cell.offsetWidth;
+    cell.classList.add('cell-highlight');
+    setTimeout(function () {
+      cell.classList.remove('cell-highlight');
+    }, 1500);
   };
 
   // --- File tree sidebar ---

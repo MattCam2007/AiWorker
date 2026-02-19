@@ -10,10 +10,25 @@
 <body>
   <aside id="sidebar" class="sidebar hidden">
     <div class="sidebar-header">
-      <span class="sidebar-title">Files</span>
+      <span class="sidebar-title">TerminalDeck</span>
       <button id="sidebar-close-btn" class="sidebar-close">&times;</button>
     </div>
-    <div id="file-tree"></div>
+    <div class="sidebar-sections">
+      <div class="sidebar-section">
+        <div class="section-header" data-section="terminals">
+          <span class="section-toggle">&#9660;</span>
+          <span class="section-title">Terminals</span>
+        </div>
+        <div id="terminal-list" class="section-content"></div>
+      </div>
+      <div class="sidebar-section">
+        <div class="section-header" data-section="files">
+          <span class="section-toggle">&#9660;</span>
+          <span class="section-title">Files</span>
+        </div>
+        <div id="file-tree" class="section-content"></div>
+      </div>
+    </div>
   </aside>
 
   <div id="main-content">
@@ -50,6 +65,7 @@
   <script src="js/terminal.js"></script>
   <script src="js/layout.js"></script>
   <script src="js/filetree.js"></script>
+  <script src="js/terminal-list.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

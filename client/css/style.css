@@ -160,11 +160,179 @@ body {
   background: var(--td-cyan);
 }
 
-/* === File Tree === */
-#file-tree {
+/* === Sidebar Sections === */
+.sidebar-sections {
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.sidebar-section {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.sidebar-section:last-child {
+  flex: 1;
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  height: 30px;
+  min-height: 30px;
+  padding: 0 12px;
+  cursor: pointer;
+  user-select: none;
+  border-bottom: 1px solid var(--td-border);
+  transition: background 0.1s ease;
+}
+
+.section-header:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.section-toggle {
+  font-size: 9px;
+  color: var(--td-text-dim);
+  margin-right: 6px;
+  transition: transform 0.15s ease;
+}
+
+.section-title {
+  font-family: var(--td-font-terminal);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--td-text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.section-content {
   overflow-y: auto;
   overflow-x: hidden;
+}
+
+.section-content.collapsed {
+  display: none;
+}
+
+.section-header.collapsed .section-toggle {
+  transform: rotate(-90deg);
+}
+
+/* === Terminal List === */
+.tl-item {
+  display: flex;
+  align-items: center;
+  height: 30px;
+  padding: 0 12px;
+  cursor: pointer;
+  font-family: var(--td-font-terminal);
+  font-size: 12px;
+  color: var(--td-text);
+  white-space: nowrap;
+  overflow: hidden;
+  transition: background 0.1s ease;
+  user-select: none;
+}
+
+.tl-item:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.tl-item:hover .tl-actions {
+  opacity: 1;
+}
+
+.tl-status {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-right: 8px;
+  background: var(--td-text-dim);
+  transition: background 0.3s ease, box-shadow 0.3s ease;
+}
+
+.tl-status-active {
+  background: radial-gradient(circle at 35% 35%, #66ff66, #33cc33);
+  box-shadow: 0 0 4px rgba(51, 255, 51, 0.4);
+}
+
+.tl-status-idle {
+  background: var(--td-text-dim);
+  box-shadow: none;
+}
+
+.tl-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+
+.tl-location {
+  font-size: 10px;
+  color: var(--td-text-dim);
+  background: rgba(255, 255, 255, 0.05);
+  padding: 1px 6px;
+  border-radius: 3px;
+  margin-left: 6px;
+  flex-shrink: 0;
+}
+
+.tl-actions {
+  display: flex;
+  gap: 2px;
+  margin-left: 6px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  flex-shrink: 0;
+}
+
+.tl-btn {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--td-text-dim);
+  background: transparent;
+  border: none;
+  border-radius: 2px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.tl-btn-minimize:hover {
+  color: var(--td-cyan);
+  background: rgba(10, 189, 198, 0.15);
+}
+
+.tl-btn-close:hover {
+  color: var(--td-danger);
+  background: rgba(255, 51, 51, 0.15);
+}
+
+.tl-item-highlight {
+  background: rgba(10, 189, 198, 0.1);
+}
+
+/* === Cell Highlight === */
+@keyframes cell-glow {
+  0% { border-color: var(--td-cyan); box-shadow: 0 0 8px rgba(10, 189, 198, 0.4); }
+  100% { border-color: var(--td-border); box-shadow: none; }
+}
+
+.cell-highlight {
+  animation: cell-glow 1.5s ease-out;
+}
+
+/* === File Tree === */
+#file-tree {
   padding: 6px 0;
 }
 
@@ -397,6 +565,31 @@ body::after {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.cell-header-spacer {
+  flex: 1;
+}
+
+.cell-header-minimize {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--td-text-dim);
+  background: transparent;
+  border: none;
+  border-radius: 2px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+  margin-right: 2px;
+}
+
+.cell-header-minimize:hover {
+  color: var(--td-cyan);
+  background: rgba(10, 189, 198, 0.15);
 }
 
 .cell-header-close {
