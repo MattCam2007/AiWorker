@@ -37,6 +37,7 @@ body {
   display: flex;
   flex-direction: row;
   height: 100vh;
+  height: 100dvh;
 }
 
 /* === Main Content Wrapper === */
@@ -46,6 +47,7 @@ body {
   flex-direction: column;
   min-width: 0;
   height: 100vh;
+  height: 100dvh;
 }
 
 /* === Sidebar === */
@@ -53,6 +55,7 @@ body {
   width: 260px;
   min-width: 260px;
   height: 100vh;
+  height: 100dvh;
   background: #0d0d0d;
   border-right: 1px solid var(--td-border);
   display: flex;
@@ -997,6 +1000,7 @@ body::after {
   left: 0;
   width: 100vw;
   height: 100vh;
+  height: 100dvh;
   background: var(--td-bg);
   z-index: 1000;
   display: flex;
@@ -1187,6 +1191,8 @@ body::after {
 
 /* === Mobile === */
 @media (max-width: 767px) {
+
+  /* --- Sidebar: fixed overlay with backdrop --- */
   .sidebar {
     position: fixed;
     top: 0;
@@ -1199,15 +1205,79 @@ body::after {
     margin-left: -260px;
   }
 
-  #grid-presets {
+  .sidebar-backdrop {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: 1049;
+  }
+
+  .sidebar-backdrop.hidden {
     display: none;
   }
 
+  .sidebar-close {
+    width: 44px;
+    height: 44px;
+    font-size: 22px;
+  }
+
+  /* --- Header: compact, no title, larger tap targets --- */
+  #header {
+    height: 40px;
+    min-height: 40px;
+    padding: 0 8px;
+    gap: 6px;
+  }
+
+  #header .title {
+    display: none;
+  }
+
+  .sidebar-toggle {
+    width: 40px;
+    height: 34px;
+  }
+
+  #grid-presets,
+  #named-layouts {
+    display: none;
+  }
+
+  #add-terminal-btn {
+    width: 40px;
+    height: 34px;
+    font-size: 20px;
+  }
+
+  /* --- Grid: force single terminal view --- */
   #grid-container {
     grid-template-columns: 1fr !important;
     grid-template-rows: 1fr !important;
   }
 
+  /* --- Cell header: keep readable, enlarge buttons for touch --- */
+  .cell-header {
+    height: 28px;
+    min-height: 28px;
+    font-size: 11px;
+    padding: 0 4px;
+  }
+
+  .cell-header-edit,
+  .cell-header-supersize,
+  .cell-header-exit-supersize,
+  .cell-header-minimize,
+  .cell-header-close {
+    width: 28px;
+    height: 28px;
+    font-size: 16px;
+  }
+
+  /* --- Minimized strip: touch-friendly --- */
   #minimized-strip {
     height: 48px;
     min-height: 48px;
@@ -1219,8 +1289,8 @@ body::after {
   .strip-item {
     flex-direction: column;
     gap: 2px;
-    padding: 4px 8px;
-    min-width: 60px;
+    padding: 6px 10px;
+    min-width: 64px;
     text-align: center;
   }
 
@@ -1228,9 +1298,106 @@ body::after {
     display: none;
   }
 
-  .cell-header {
-    height: 20px;
-    min-height: 20px;
-    font-size: 10px;
+  .strip-close {
+    width: 28px;
+    height: 28px;
+    font-size: 16px;
+  }
+
+  /* --- Terminal list: always show actions (no hover on touch) --- */
+  .tl-item {
+    height: 40px;
+    padding: 0 10px;
+  }
+
+  .tl-actions {
+    opacity: 1;
+  }
+
+  .tl-btn {
+    width: 32px;
+    height: 32px;
+    font-size: 18px;
+  }
+
+  /* --- File tree: taller rows for touch --- */
+  .ft-item {
+    height: 36px;
+  }
+
+  /* --- Edit popover / dialog: responsive, larger controls --- */
+  .cell-edit-popover {
+    position: fixed;
+    top: auto;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    max-width: 100%;
+    border-radius: 12px 12px 0 0;
+    padding: 16px;
+    z-index: 1100;
+  }
+
+  .edit-swatch {
+    width: 28px;
+    height: 28px;
+  }
+
+  .edit-color-native {
+    width: 28px;
+    height: 28px;
+  }
+
+  .edit-swatches {
+    gap: 5px;
+  }
+
+  .edit-save,
+  .edit-cancel {
+    padding: 10px 20px;
+    font-size: 14px;
+  }
+
+  .edit-name-input {
+    padding: 10px;
+    font-size: 14px;
+  }
+
+  /* --- Create terminal dialog: full-width on mobile --- */
+  #ephemeral-dialog {
+    width: calc(100% - 32px);
+    max-width: 360px;
+    max-height: 80vh;
+    max-height: 80dvh;
+    overflow-y: auto;
+    padding: 16px;
+  }
+
+  #ephemeral-dialog .edit-name-input {
+    padding: 10px;
+    font-size: 14px;
+  }
+
+  /* --- Fullscreen close: larger tap target --- */
+  .fullscreen-close {
+    width: 44px;
+    height: 44px;
+    font-size: 22px;
+    top: 8px;
+    right: 8px;
+  }
+
+  /* --- Cell add button: already good at 48px --- */
+
+  /* --- Popover items: taller for touch --- */
+  .popover-item {
+    padding: 12px 16px;
+    font-size: 14px;
+  }
+
+  /* --- Section headers: taller for touch --- */
+  .section-header {
+    height: 40px;
+    min-height: 40px;
   }
 }

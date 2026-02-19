@@ -39,6 +39,7 @@ describe('App', function () {
         '<button class="fullscreen-close"></button>' +
         '<div class="fullscreen-terminal"></div>' +
         '</div>' +
+        '<div id="sidebar-backdrop" class="sidebar-backdrop hidden"></div>' +
         '<div id="ephemeral-dialog" class="hidden"></div>' +
         '<div id="ephemeral-backdrop" class="hidden"></div>' +
         '</body></html>',
@@ -65,6 +66,11 @@ describe('App', function () {
     global.ResizeObserver = undefined;
     global.requestAnimationFrame = function (cb) {
       cb();
+    };
+
+    // Mock matchMedia for mobile detection
+    window.matchMedia = function () {
+      return { matches: false, addEventListener: function () {} };
     };
 
     // Prevent auto-init on DOMContentLoaded
@@ -115,6 +121,7 @@ describe('App', function () {
       this._removeFromGrid = sinon.stub();
       this.updateHeader = sinon.stub();
       this.clearSupersize = sinon.stub();
+      this.checkMobile = sinon.stub().returns(false);
       this._createColorSwatches = function (activeColor, onSelect) {
         var container = document.createElement('div');
         container.className = 'edit-swatches';

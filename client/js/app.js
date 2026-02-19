@@ -29,6 +29,7 @@
         self._initTerminalList();
         self._initSidebarSections();
         self._wireSidebarToggle();
+        self._wireOrientationChange();
         self._connectControl();
 
         return self._loadSessions();
@@ -68,7 +69,11 @@
       self._pendingCell = cell;
       self._showCreateDialog();
     };
-    this._engine.setGrid('2x2');
+
+    // On mobile, force 1x1 grid; otherwise default to 2x2
+    if (!this._engine.checkMobile()) {
+      this._engine.setGrid('2x2');
+    }
   };
 
   App.prototype._buildHeader = function () {
@@ -674,6 +679,11 @@
   App.prototype._handleTerminalListSelect = function (id) {
     if (!this._engine) return;
 
+    // Close sidebar on mobile so user sees the terminal
+    if (this._isMobile() && this._closeSidebar) {
+      this._closeSidebar();
+    }
+
     // Check if terminal is in a grid cell
     for (var i = 0; i < this._engine._cells.length; i++) {
       var cell = this._engine._cells[i];
@@ -725,17 +735,40 @@
     this._fileTree.init();
   };
 
+  App.prototype._isMobile = function () {
+    return window.matchMedia && window.matchMedia('(max-width: 767px)').matches;
+  };
+
   App.prototype._wireSidebarToggle = function () {
     var self = this;
     var sidebar = document.getElementById('sidebar');
     var toggleBtn = document.getElementById('sidebar-toggle-btn');
     var closeBtn = document.getElementById('sidebar-close-btn');
+    var backdrop = document.getElementById('sidebar-backdrop');
 
     if (!sidebar || !toggleBtn) return;
 
+    function openSidebar() {
+      sidebar.classList.remove('hidden');
+      if (backdrop && self._isMobile()) backdrop.classList.remove('hidden');
+      refit();
+    }
+
+    function closeSidebar() {
+      sidebar.classList.add('hidden');
+      if (backdrop) backdrop.classList.add('hidden');
+      refit();
+    }
+
     function toggle() {
-      sidebar.classList.toggle('hidden');
-      // Refit terminals after sidebar animation completes
+      if (sidebar.classList.contains('hidden')) {
+        openSidebar();
+      } else {
+        closeSidebar();
+      }
+    }
+
+    function refit() {
       setTimeout(function () {
         if (self._engine) {
           self._engine._cells.forEach(function (cell) {
@@ -749,12 +782,29 @@
     }
 
     toggleBtn.addEventListener('click', toggle);
-    if (closeBtn) {
-      closeBtn.addEventListener('click', toggle);
+    if (closeBtn) closeBtn.addEventListener('click', closeSidebar);
+    if (backdrop) backdrop.addEventListener('click', closeSidebar);
+
+    // Expose closeSidebar for use by terminal list selection
+    this._closeSidebar = closeSidebar;
+  };
+
+  App.prototype._wireOrientationChange = function () {
+    var self = this;
+    var mq = window.matchMedia && window.matchMedia('(max-width: 767px)');
+    if (mq && mq.addEventListener) {
+      mq.addEventListener('change', function () {
+        if (self._engine) {
+          self._engine.checkMobile();
+          self._engine.refitAll();
+        }
+      });
     }
   };
 
   App.prototype._openFileInEditor = function (filePath, fileName) {
+    // Reject paths with shell metacharacters to prevent command injection
+    if (/[;|&`$(){}[\]!#~]/.test(filePath)) return;
     this._sendCreateTerminal(fileName, 'vi /workspace/' + filePath);
   };
 
