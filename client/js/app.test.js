@@ -34,7 +34,6 @@ describe('App', function () {
         '<div id="connection-status" class="status-indicator"></div>' +
         '</header>' +
         '<main id="grid-container"></main>' +
-        '<div id="minimized-strip"></div>' +
         '<div id="fullscreen-overlay" class="hidden">' +
         '<button class="fullscreen-close"></button>' +
         '<div class="fullscreen-terminal"></div>' +
@@ -93,10 +92,9 @@ describe('App', function () {
     };
 
     // Stub LayoutEngine
-    window.TerminalDeck.LayoutEngine = function (grid, strip) {
+    window.TerminalDeck.LayoutEngine = function (grid) {
       this._gridContainer = grid;
-      this._stripContainer = strip;
-      this._stripItems = new Map();
+      this._minimized = new Map();
       this._cells = [];
       this._cellMap = new Map();
       this.setGrid = sinon.stub().callsFake(function (spec) {
@@ -116,8 +114,8 @@ describe('App', function () {
       this.assignTerminal = sinon.stub().callsFake(function (cell, id, conn) {
         this._cellMap.set(cell, { connection: conn, terminalId: id });
       });
-      this._addToStrip = sinon.stub();
-      this._removeFromStrip = sinon.stub();
+      this._addToMinimized = sinon.stub();
+      this._removeFromMinimized = sinon.stub();
       this._removeFromGrid = sinon.stub();
       this.updateHeader = sinon.stub();
       this.clearSupersize = sinon.stub();
@@ -396,19 +394,17 @@ describe('App', function () {
     });
   });
 
-  it('_handleActivity() updates strip status dot and triggers pulse', function () {
+  it('_handleActivity() updates sidebar terminal list activity', function () {
     var app = new App();
     return app.init().then(function () {
-      app._engine._stripItems.set('t1', {
-        element: (function () {
-          var el = document.createElement('div');
-          el.className = 'strip-item';
-          var dot = document.createElement('span');
-          dot.className = 'strip-status';
-          el.appendChild(dot);
-          return el;
-        })()
-      });
+      // Init terminal list manually since test DOM lacks the container
+      app._terminalList = {
+        _items: new Map(),
+        upsert: sinon.stub(),
+        remove: sinon.stub(),
+        updateActivity: sinon.stub(),
+        updateLocation: sinon.stub()
+      };
 
       var activityMsg = {
         statuses: { t1: true, t2: false }
@@ -416,8 +412,8 @@ describe('App', function () {
 
       app._handleActivity(activityMsg);
 
-      var dot = app._engine._stripItems.get('t1').element.querySelector('.strip-status');
-      expect(dot.classList.contains('status-active')).to.be.true;
+      expect(app._terminalList.updateActivity.calledWith('t1', true)).to.be.true;
+      expect(app._terminalList.updateActivity.calledWith('t2', false)).to.be.true;
     });
   });
 

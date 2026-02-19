@@ -22,7 +22,6 @@ describe('LayoutEngine', function () {
     dom = new JSDOM(
       '<!DOCTYPE html><html><body>' +
         '<div id="grid-container"></div>' +
-        '<div id="minimized-strip"></div>' +
         '<div id="fullscreen-overlay" class="hidden">' +
         '<button class="fullscreen-close"></button>' +
         '<div class="fullscreen-terminal"></div>' +
@@ -68,8 +67,7 @@ describe('LayoutEngine', function () {
 
   it('setGrid("1x1") creates 1 cell with correct grid template', function () {
     var grid = document.getElementById('grid-container');
-    var strip = document.getElementById('minimized-strip');
-    var engine = new LayoutEngine(grid, strip);
+    var engine = new LayoutEngine(grid);
 
     engine.setGrid('1x1');
     expect(grid.style.gridTemplateColumns).to.equal('repeat(1, 1fr)');
@@ -79,8 +77,7 @@ describe('LayoutEngine', function () {
 
   it('setGrid("2x2") creates 4 cells with correct grid template', function () {
     var grid = document.getElementById('grid-container');
-    var strip = document.getElementById('minimized-strip');
-    var engine = new LayoutEngine(grid, strip);
+    var engine = new LayoutEngine(grid);
 
     engine.setGrid('2x2');
     expect(grid.style.gridTemplateColumns).to.equal('repeat(2, 1fr)');
@@ -90,8 +87,7 @@ describe('LayoutEngine', function () {
 
   it('setGrid("3x2") creates 6 cells with correct columns', function () {
     var grid = document.getElementById('grid-container');
-    var strip = document.getElementById('minimized-strip');
-    var engine = new LayoutEngine(grid, strip);
+    var engine = new LayoutEngine(grid);
 
     engine.setGrid('3x2');
     expect(grid.style.gridTemplateColumns).to.equal('repeat(3, 1fr)');
@@ -100,8 +96,7 @@ describe('LayoutEngine', function () {
 
   it('all 8 presets generate correct CSS grid templates', function () {
     var grid = document.getElementById('grid-container');
-    var strip = document.getElementById('minimized-strip');
-    var engine = new LayoutEngine(grid, strip);
+    var engine = new LayoutEngine(grid);
     var presets = LayoutEngine.GRID_PRESETS;
 
     Object.keys(presets).forEach(function (spec) {
@@ -115,8 +110,7 @@ describe('LayoutEngine', function () {
 
   it('new cells have cell-empty class', function () {
     var grid = document.getElementById('grid-container');
-    var strip = document.getElementById('minimized-strip');
-    var engine = new LayoutEngine(grid, strip);
+    var engine = new LayoutEngine(grid);
 
     engine.setGrid('2x2');
     var cells = grid.querySelectorAll('.grid-cell');
@@ -127,8 +121,7 @@ describe('LayoutEngine', function () {
 
   it('applyLayout() assigns terminals to cells from layout config', function () {
     var grid = document.getElementById('grid-container');
-    var strip = document.getElementById('minimized-strip');
-    var engine = new LayoutEngine(grid, strip);
+    var engine = new LayoutEngine(grid);
 
     var connections = {
       t1: makeConnection('t1', 'Terminal 1'),
@@ -146,10 +139,9 @@ describe('LayoutEngine', function () {
     expect(connections.t2.attach.calledOnce).to.be.true;
   });
 
-  it('applyLayout() puts unassigned terminals in minimized strip', function () {
+  it('applyLayout() puts unassigned terminals in minimized map', function () {
     var grid = document.getElementById('grid-container');
-    var strip = document.getElementById('minimized-strip');
-    var engine = new LayoutEngine(grid, strip);
+    var engine = new LayoutEngine(grid);
 
     var connections = {
       t1: makeConnection('t1', 'Terminal 1'),
@@ -164,19 +156,15 @@ describe('LayoutEngine', function () {
 
     engine.applyLayout(layout, connections);
 
-    // t2 and t3 should be in strip
-    expect(strip.querySelectorAll('.strip-item').length).to.equal(2);
-    var stripNames = Array.from(strip.querySelectorAll('.strip-name')).map(function (el) {
-      return el.textContent;
-    });
-    expect(stripNames).to.include('Terminal 2');
-    expect(stripNames).to.include('Terminal 3');
+    // t2 and t3 should be minimized
+    expect(engine._minimized.size).to.equal(2);
+    expect(engine._minimized.has('t2')).to.be.true;
+    expect(engine._minimized.has('t3')).to.be.true;
   });
 
   it('assignTerminal() calls connection.attach() on cell terminal mount', function () {
     var grid = document.getElementById('grid-container');
-    var strip = document.getElementById('minimized-strip');
-    var engine = new LayoutEngine(grid, strip);
+    var engine = new LayoutEngine(grid);
 
     engine.setGrid('1x1');
     var cell = grid.querySelector('.grid-cell');
@@ -190,8 +178,7 @@ describe('LayoutEngine', function () {
 
   it('assignTerminal() shows cell header with terminal name', function () {
     var grid = document.getElementById('grid-container');
-    var strip = document.getElementById('minimized-strip');
-    var engine = new LayoutEngine(grid, strip);
+    var engine = new LayoutEngine(grid);
 
     engine.setGrid('1x1');
     var cell = grid.querySelector('.grid-cell');
@@ -205,89 +192,33 @@ describe('LayoutEngine', function () {
     expect(header.style.display).to.not.equal('none');
   });
 
-  it('strip item click sets _swapSource', function () {
+  it('_addToMinimized tracks connection in _minimized map', function () {
     var grid = document.getElementById('grid-container');
-    var strip = document.getElementById('minimized-strip');
-    var engine = new LayoutEngine(grid, strip);
+    var engine = new LayoutEngine(grid);
 
     engine.setGrid('1x1');
     var conn = makeConnection('t1', 'Term 1');
-    engine._addToStrip('t1', conn);
+    engine._addToMinimized('t1', conn);
 
-    var item = strip.querySelector('.strip-item');
-    item.click();
-
-    expect(engine._swapSource).to.not.be.null;
-    expect(engine._swapSource.terminalId).to.equal('t1');
+    expect(engine._minimized.has('t1')).to.be.true;
+    expect(engine._minimized.get('t1')).to.equal(conn);
   });
 
-  it('clicking already-selected strip item deselects it', function () {
+  it('_removeFromMinimized removes connection from map', function () {
     var grid = document.getElementById('grid-container');
-    var strip = document.getElementById('minimized-strip');
-    var engine = new LayoutEngine(grid, strip);
+    var engine = new LayoutEngine(grid);
 
-    engine.setGrid('1x1');
     var conn = makeConnection('t1', 'Term 1');
-    engine._addToStrip('t1', conn);
+    engine._addToMinimized('t1', conn);
+    expect(engine._minimized.has('t1')).to.be.true;
 
-    var item = strip.querySelector('.strip-item');
-    item.click(); // select
-    expect(engine._swapSource).to.not.be.null;
-
-    item.click(); // deselect
-    expect(engine._swapSource).to.be.null;
+    engine._removeFromMinimized('t1');
+    expect(engine._minimized.has('t1')).to.be.false;
   });
 
-  it('cell click with _swapSource triggers swap', function () {
+  it('switching to smaller grid moves only excess terminals to minimized', function () {
     var grid = document.getElementById('grid-container');
-    var strip = document.getElementById('minimized-strip');
-    var engine = new LayoutEngine(grid, strip);
-
-    engine.setGrid('1x1');
-    var cell = grid.querySelector('.grid-cell');
-    var oldConn = makeConnection('old', 'Old Terminal');
-    engine.assignTerminal(cell, 'old', oldConn);
-
-    var newConn = makeConnection('new', 'New Terminal');
-    engine._addToStrip('new', newConn);
-
-    // Select from strip
-    var stripItem = strip.querySelector('.strip-item');
-    stripItem.click();
-
-    // Click cell header to trigger swap
-    var header = cell.querySelector('.cell-header');
-    header.click();
-
-    // Old should have been detached and moved to strip
-    expect(oldConn.detach.called).to.be.true;
-    // New should be attached
-    expect(newConn.attach.calledOnce).to.be.true;
-    // Swap source cleared
-    expect(engine._swapSource).to.be.null;
-  });
-
-  it('swap calls refit() on affected connections', function () {
-    var grid = document.getElementById('grid-container');
-    var strip = document.getElementById('minimized-strip');
-    var engine = new LayoutEngine(grid, strip);
-
-    engine.setGrid('1x1');
-    var cell = grid.querySelector('.grid-cell');
-
-    var newConn = makeConnection('new', 'New');
-    engine._addToStrip('new', newConn);
-
-    strip.querySelector('.strip-item').click();
-    cell.querySelector('.cell-header').click();
-
-    expect(newConn.refit.called).to.be.true;
-  });
-
-  it('switching to smaller grid moves only excess terminals to strip', function () {
-    var grid = document.getElementById('grid-container');
-    var strip = document.getElementById('minimized-strip');
-    var engine = new LayoutEngine(grid, strip);
+    var engine = new LayoutEngine(grid);
 
     var connections = {
       t1: makeConnection('t1', 'T1'),
@@ -299,19 +230,18 @@ describe('LayoutEngine', function () {
     // Start with 2x2 (4 cells)
     engine.applyLayout({ grid: '2x2', cells: [['t1', 't2'], ['t3', 't4']] }, connections);
 
-    // Switch to 1x1 — only terminals that don't fit should move to strip
+    // Switch to 1x1 — only terminals that don't fit should be minimized
     engine.setGrid('1x1');
 
-    // t1 stays at (0,0), t2/t3/t4 go to strip
-    expect(strip.querySelectorAll('.strip-item').length).to.equal(3);
+    // t1 stays at (0,0), t2/t3/t4 go to minimized
+    expect(engine._minimized.size).to.equal(3);
     var cellInfo = engine._cellMap.get(engine._cells[0]);
     expect(cellInfo.terminalId).to.equal('t1');
   });
 
   it('growing grid preserves terminals at matching (row,col) positions', function () {
     var grid = document.getElementById('grid-container');
-    var strip = document.getElementById('minimized-strip');
-    var engine = new LayoutEngine(grid, strip);
+    var engine = new LayoutEngine(grid);
 
     var connections = {
       t1: makeConnection('t1', 'T1'),
@@ -326,7 +256,7 @@ describe('LayoutEngine', function () {
     // Switch to 3x2 — all 4 fit, no terminals should be minimized
     engine.setGrid('3x2');
 
-    expect(strip.querySelectorAll('.strip-item').length).to.equal(0);
+    expect(engine._minimized.size).to.equal(0);
     expect(engine._cells.length).to.equal(6);
 
     // t1 stays at (0,0), t2 at (0,1), t3 at (1,0), t4 at (1,1)
@@ -342,8 +272,7 @@ describe('LayoutEngine', function () {
 
   it('shrinking grid keeps fitting terminals and minimizes the rest', function () {
     var grid = document.getElementById('grid-container');
-    var strip = document.getElementById('minimized-strip');
-    var engine = new LayoutEngine(grid, strip);
+    var engine = new LayoutEngine(grid);
 
     var connections = {
       t1: makeConnection('t1', 'T1'),
@@ -362,38 +291,16 @@ describe('LayoutEngine', function () {
     expect(engine._cells.length).to.equal(2);
     expect(engine._cellMap.get(engine._cells[0]).terminalId).to.equal('t1');
     expect(engine._cellMap.get(engine._cells[1]).terminalId).to.equal('t2');
-    expect(strip.querySelectorAll('.strip-item').length).to.equal(2);
+    expect(engine._minimized.size).to.equal(2);
   });
 
-  it('empty cell click with selection places the terminal', function () {
+  it('empty cell click shows popover with minimized terminals', function () {
     var grid = document.getElementById('grid-container');
-    var strip = document.getElementById('minimized-strip');
-    var engine = new LayoutEngine(grid, strip);
-
-    engine.setGrid('1x1');
-    var cell = grid.querySelector('.grid-cell');
-    var conn = makeConnection('t1', 'Term 1');
-    engine._addToStrip('t1', conn);
-
-    // Select from strip
-    strip.querySelector('.strip-item').click();
-
-    // Click empty cell
-    cell.click();
-
-    // Should have placed terminal
-    expect(conn.attach.calledOnce).to.be.true;
-    expect(engine._swapSource).to.be.null;
-  });
-
-  it('empty cell click without selection shows popover', function () {
-    var grid = document.getElementById('grid-container');
-    var strip = document.getElementById('minimized-strip');
-    var engine = new LayoutEngine(grid, strip);
+    var engine = new LayoutEngine(grid);
 
     engine.setGrid('2x1');
     var conn = makeConnection('t1', 'Term 1');
-    engine._addToStrip('t1', conn);
+    engine._addToMinimized('t1', conn);
 
     // Click empty cell without selection
     var cells = grid.querySelectorAll('.grid-cell');
@@ -406,8 +313,7 @@ describe('LayoutEngine', function () {
 
   it('enterFullscreen() shows overlay and attaches terminal', function () {
     var grid = document.getElementById('grid-container');
-    var strip = document.getElementById('minimized-strip');
-    var engine = new LayoutEngine(grid, strip);
+    var engine = new LayoutEngine(grid);
 
     engine.setGrid('1x1');
     var cell = grid.querySelector('.grid-cell');
@@ -425,8 +331,7 @@ describe('LayoutEngine', function () {
 
   it('exitFullscreen() hides overlay and re-attaches to original cell', function () {
     var grid = document.getElementById('grid-container');
-    var strip = document.getElementById('minimized-strip');
-    var engine = new LayoutEngine(grid, strip);
+    var engine = new LayoutEngine(grid);
 
     engine.setGrid('1x1');
     var cell = grid.querySelector('.grid-cell');
@@ -444,8 +349,7 @@ describe('LayoutEngine', function () {
 
   it('Escape key calls exitFullscreen()', function () {
     var grid = document.getElementById('grid-container');
-    var strip = document.getElementById('minimized-strip');
-    var engine = new LayoutEngine(grid, strip);
+    var engine = new LayoutEngine(grid);
 
     engine.setGrid('1x1');
     var cell = grid.querySelector('.grid-cell');
@@ -464,8 +368,7 @@ describe('LayoutEngine', function () {
 
   it('refitAll() calls refit() on all assigned connections', function () {
     var grid = document.getElementById('grid-container');
-    var strip = document.getElementById('minimized-strip');
-    var engine = new LayoutEngine(grid, strip);
+    var engine = new LayoutEngine(grid);
 
     var connections = {
       t1: makeConnection('t1', 'T1'),
@@ -486,8 +389,7 @@ describe('LayoutEngine', function () {
 
   it('mobile detection forces 1x1 grid', function () {
     var grid = document.getElementById('grid-container');
-    var strip = document.getElementById('minimized-strip');
-    var engine = new LayoutEngine(grid, strip);
+    var engine = new LayoutEngine(grid);
 
     // Mock matchMedia to return mobile
     window.matchMedia = function () {
@@ -503,8 +405,7 @@ describe('LayoutEngine', function () {
 
   it('assignTerminal() schedules deferred refit on the connection', function () {
     var grid = document.getElementById('grid-container');
-    var strip = document.getElementById('minimized-strip');
-    var engine = new LayoutEngine(grid, strip);
+    var engine = new LayoutEngine(grid);
 
     engine.setGrid('1x1');
     var cell = grid.querySelector('.grid-cell');
@@ -517,8 +418,7 @@ describe('LayoutEngine', function () {
 
   it('assignTerminal() shows close button in header', function () {
     var grid = document.getElementById('grid-container');
-    var strip = document.getElementById('minimized-strip');
-    var engine = new LayoutEngine(grid, strip);
+    var engine = new LayoutEngine(grid);
 
     engine.setGrid('1x1');
     var cell = grid.querySelector('.grid-cell');
@@ -531,8 +431,7 @@ describe('LayoutEngine', function () {
 
   it('close button in header calls _onCloseTerminal callback', function () {
     var grid = document.getElementById('grid-container');
-    var strip = document.getElementById('minimized-strip');
-    var engine = new LayoutEngine(grid, strip);
+    var engine = new LayoutEngine(grid);
 
     var closeSpy = sinon.spy();
     engine._onCloseTerminal = closeSpy;
@@ -549,63 +448,9 @@ describe('LayoutEngine', function () {
     expect(closeSpy.calledWith('t1')).to.be.true;
   });
 
-  it('strip item has close button', function () {
-    var grid = document.getElementById('grid-container');
-    var strip = document.getElementById('minimized-strip');
-    var engine = new LayoutEngine(grid, strip);
-
-    engine.setGrid('1x1');
-    var conn = makeConnection('t1', 'Term 1');
-    engine._addToStrip('t1', conn);
-
-    var closeBtn = strip.querySelector('.strip-close');
-    expect(closeBtn).to.exist;
-  });
-
-  it('strip close button calls _onCloseTerminal callback', function () {
-    var grid = document.getElementById('grid-container');
-    var strip = document.getElementById('minimized-strip');
-    var engine = new LayoutEngine(grid, strip);
-
-    var closeSpy = sinon.spy();
-    engine._onCloseTerminal = closeSpy;
-
-    engine.setGrid('1x1');
-    var conn = makeConnection('t1', 'Term 1');
-    engine._addToStrip('t1', conn);
-
-    var closeBtn = strip.querySelector('.strip-close');
-    closeBtn.click();
-
-    expect(closeSpy.calledOnce).to.be.true;
-    expect(closeSpy.calledWith('t1')).to.be.true;
-  });
-
-  it('strip close button stopPropagation prevents swap', function () {
-    var grid = document.getElementById('grid-container');
-    var strip = document.getElementById('minimized-strip');
-    var engine = new LayoutEngine(grid, strip);
-
-    var closeSpy = sinon.spy();
-    engine._onCloseTerminal = closeSpy;
-
-    engine.setGrid('1x1');
-    var conn = makeConnection('t1', 'Term 1');
-    engine._addToStrip('t1', conn);
-
-    var closeBtn = strip.querySelector('.strip-close');
-    closeBtn.click();
-
-    // _swapSource should NOT be set because stopPropagation prevented
-    // the strip item click handler from firing
-    expect(engine._swapSource).to.be.null;
-    expect(closeSpy.calledOnce).to.be.true;
-  });
-
   it('assignTerminal() shows edit button in header', function () {
     var grid = document.getElementById('grid-container');
-    var strip = document.getElementById('minimized-strip');
-    var engine = new LayoutEngine(grid, strip);
+    var engine = new LayoutEngine(grid);
 
     engine.setGrid('1x1');
     var cell = grid.querySelector('.grid-cell');
@@ -618,8 +463,7 @@ describe('LayoutEngine', function () {
 
   it('edit button click opens edit popover', function () {
     var grid = document.getElementById('grid-container');
-    var strip = document.getElementById('minimized-strip');
-    var engine = new LayoutEngine(grid, strip);
+    var engine = new LayoutEngine(grid);
 
     engine.setGrid('1x1');
     var cell = grid.querySelector('.grid-cell');
@@ -638,8 +482,7 @@ describe('LayoutEngine', function () {
 
   it('edit popover save calls _onUpdateTerminal callback', function () {
     var grid = document.getElementById('grid-container');
-    var strip = document.getElementById('minimized-strip');
-    var engine = new LayoutEngine(grid, strip);
+    var engine = new LayoutEngine(grid);
 
     var updateSpy = sinon.spy();
     engine._onUpdateTerminal = updateSpy;
@@ -666,8 +509,7 @@ describe('LayoutEngine', function () {
 
   it('edit popover cancel reverts header styles and removes popover', function () {
     var grid = document.getElementById('grid-container');
-    var strip = document.getElementById('minimized-strip');
-    var engine = new LayoutEngine(grid, strip);
+    var engine = new LayoutEngine(grid);
 
     engine.setGrid('1x1');
     var cell = grid.querySelector('.grid-cell');
@@ -689,8 +531,7 @@ describe('LayoutEngine', function () {
 
   it('updateHeader() updates cell header name and colors', function () {
     var grid = document.getElementById('grid-container');
-    var strip = document.getElementById('minimized-strip');
-    var engine = new LayoutEngine(grid, strip);
+    var engine = new LayoutEngine(grid);
 
     engine.setGrid('1x1');
     var cell = grid.querySelector('.grid-cell');
@@ -707,25 +548,25 @@ describe('LayoutEngine', function () {
     expect(header.style.color).to.not.equal('');
   });
 
-  it('updateHeader() updates strip item name', function () {
+  it('minimizeTerminal() moves terminal from grid to _minimized map', function () {
     var grid = document.getElementById('grid-container');
-    var strip = document.getElementById('minimized-strip');
-    var engine = new LayoutEngine(grid, strip);
+    var engine = new LayoutEngine(grid);
 
     engine.setGrid('1x1');
-    var conn = makeConnection('t1', 'Original');
-    engine._addToStrip('t1', conn);
+    var cell = grid.querySelector('.grid-cell');
+    var conn = makeConnection('t1', 'Test');
+    engine.assignTerminal(cell, 't1', conn);
 
-    engine.updateHeader('t1', 'Updated', null, null);
+    engine.minimizeTerminal('t1');
 
-    var stripName = strip.querySelector('.strip-name');
-    expect(stripName.textContent).to.equal('Updated');
+    expect(engine._minimized.has('t1')).to.be.true;
+    expect(engine._minimized.get('t1')).to.equal(conn);
+    expect(conn.detach.called).to.be.true;
   });
 
   it('assignTerminal() applies headerBg and headerColor from connection config', function () {
     var grid = document.getElementById('grid-container');
-    var strip = document.getElementById('minimized-strip');
-    var engine = new LayoutEngine(grid, strip);
+    var engine = new LayoutEngine(grid);
 
     engine.setGrid('1x1');
     var cell = grid.querySelector('.grid-cell');
@@ -742,8 +583,7 @@ describe('LayoutEngine', function () {
 
   it('_createColorSwatches() returns container with swatches', function () {
     var grid = document.getElementById('grid-container');
-    var strip = document.getElementById('minimized-strip');
-    var engine = new LayoutEngine(grid, strip);
+    var engine = new LayoutEngine(grid);
 
     var selectSpy = sinon.spy();
     var container = engine._createColorSwatches(null, selectSpy);

@@ -14,14 +14,12 @@
     '1x3': { cols: 1, rows: 3 }
   };
 
-  function LayoutEngine(gridContainer, stripContainer) {
+  function LayoutEngine(gridContainer) {
     this._gridContainer = gridContainer;
-    this._stripContainer = stripContainer;
     this._cells = [];
     this._cellMap = new Map(); // cell element -> { connection, terminalId }
-    this._stripItems = new Map(); // terminalId -> strip element
+    this._minimized = new Map(); // terminalId -> connection
     this._currentGrid = null;
-    this._swapSource = null;
     this._fullscreenConnection = null;
     this._fullscreenOrigCell = null;
     this._resizeObserver = null;
@@ -174,7 +172,7 @@
         var info = self._cellMap.get(cell);
         if (info && info.connection) {
           info.connection.detach();
-          self._addToStrip(info.terminalId, info.connection);
+          self._addToMinimized(info.terminalId, info.connection);
         }
         self._cellMap.delete(cell);
         cell.remove();
@@ -226,10 +224,10 @@
       }
     }
 
-    // Put unassigned terminals in strip
+    // Minimize unassigned terminals
     Object.keys(connections).forEach(function (id) {
       if (!assigned.has(id)) {
-        self._addToStrip(id, connections[id]);
+        self._addToMinimized(id, connections[id]);
       }
     });
 
@@ -333,13 +331,11 @@
       connection.attach(mount);
     }
 
-    // Remove from strip if present — may toggle strip visibility via CSS :empty,
-    // changing the grid container's height after fit() already ran.
-    this._removeFromStrip(terminalId);
+    this._removeFromMinimized(terminalId);
 
-    // Schedule a deferred refit to catch any layout shifts from strip
-    // visibility changes or header display changes.  Double-rAF ensures
-    // the browser has completed at least one full rendering cycle.
+    // Schedule a deferred refit to catch any layout shifts from header
+    // display changes.  Double-rAF ensures the browser has completed at
+    // least one full rendering cycle.
     if (typeof requestAnimationFrame !== 'undefined') {
       requestAnimationFrame(function () {
         requestAnimationFrame(function () {
@@ -371,8 +367,7 @@
         }
         var mount = cell.querySelector('.cell-terminal');
         if (mount) mount.innerHTML = '';
-        // Add to strip
-        self._addToStrip(terminalId, conn);
+        self._addToMinimized(terminalId, conn);
         found = true;
       }
     });
@@ -383,44 +378,10 @@
     }
   };
 
-  LayoutEngine.prototype._addToStrip = function (terminalId, connection) {
-    if (this._stripItems.has(terminalId)) return;
-
-    var item = document.createElement('div');
-    item.className = 'strip-item';
-    item.dataset.terminalId = terminalId;
-
-    var dot = document.createElement('span');
-    dot.className = 'strip-status';
-    item.appendChild(dot);
-
-    var nameEl = document.createElement('span');
-    nameEl.className = 'strip-name';
-    nameEl.textContent = connection.config.name || terminalId;
-    item.appendChild(nameEl);
-
-    var preview = document.createElement('span');
-    preview.className = 'strip-preview';
-    preview.textContent = connection.getLastOutput() || '';
-    item.appendChild(preview);
-
-    var self = this;
-
-    var closeBtn = document.createElement('button');
-    closeBtn.className = 'strip-close';
-    closeBtn.innerHTML = '&times;';
-    closeBtn.addEventListener('click', function (e) {
-      e.stopPropagation();
-      if (self._onCloseTerminal) self._onCloseTerminal(terminalId);
-    });
-    item.appendChild(closeBtn);
-
-    item.addEventListener('click', function () {
-      self._handleStripClick(terminalId, connection);
-    });
-
-    this._stripContainer.appendChild(item);
-    this._stripItems.set(terminalId, { element: item, connection: connection });
+  LayoutEngine.prototype._addToMinimized = function (terminalId, connection) {
+    if (!this._minimized.has(terminalId)) {
+      this._minimized.set(terminalId, connection);
+    }
   };
 
   LayoutEngine.prototype._removeFromGrid = function (terminalId) {
@@ -433,58 +394,13 @@
     });
   };
 
-  LayoutEngine.prototype._removeFromStrip = function (terminalId) {
-    var entry = this._stripItems.get(terminalId);
-    if (entry) {
-      entry.element.remove();
-      this._stripItems.delete(terminalId);
-    }
-  };
-
-  LayoutEngine.prototype._handleStripClick = function (terminalId, connection) {
-    if (this._swapSource && this._swapSource.terminalId === terminalId) {
-      // Deselect
-      this._swapSource = null;
-      this._clearHighlights();
-      return;
-    }
-
-    this._swapSource = { terminalId: terminalId, connection: connection };
-    this._clearHighlights();
-
-    var entry = this._stripItems.get(terminalId);
-    if (entry) {
-      entry.element.classList.add('strip-item-selected');
-    }
+  LayoutEngine.prototype._removeFromMinimized = function (terminalId) {
+    this._minimized.delete(terminalId);
   };
 
   LayoutEngine.prototype._handleCellClick = function (cell) {
     var cellInfo = this._cellMap.get(cell);
-
-    if (this._swapSource) {
-      var sourceId = this._swapSource.terminalId;
-      var sourceConn = this._swapSource.connection;
-
-      // If cell has occupant, move occupant to strip
-      if (cellInfo && cellInfo.connection) {
-        cellInfo.connection.detach();
-        this._addToStrip(cellInfo.terminalId, cellInfo.connection);
-      }
-
-      // Remove source from strip
-      this._removeFromStrip(sourceId);
-
-      // Assign source to cell
-      this.assignTerminal(cell, sourceId, sourceConn);
-
-      // Clear selection
-      this._swapSource = null;
-      this._clearHighlights();
-
-      // Refit affected
-      sourceConn.refit();
-    } else if (!cellInfo || !cellInfo.connection) {
-      // Empty cell clicked without selection — show popover
+    if (!cellInfo || !cellInfo.connection) {
       this._showCellPopover(cell);
     }
   };
@@ -497,22 +413,22 @@
       return;
     }
 
-    if (this._stripItems.size === 0) return;
+    if (this._minimized.size === 0) return;
 
     var popover = document.createElement('div');
     popover.className = 'cell-popover';
 
     var self = this;
-    this._stripItems.forEach(function (entry, termId) {
+    this._minimized.forEach(function (conn, termId) {
       var btn = document.createElement('button');
       btn.className = 'popover-item';
-      btn.textContent = entry.connection.config.name || termId;
+      btn.textContent = conn.config.name || termId;
       btn.addEventListener('click', function (e) {
         e.stopPropagation();
         popover.remove();
-        self._removeFromStrip(termId);
-        self.assignTerminal(cell, termId, entry.connection);
-        entry.connection.refit();
+        self._removeFromMinimized(termId);
+        self.assignTerminal(cell, termId, conn);
+        conn.refit();
       });
       popover.appendChild(btn);
     });
@@ -731,19 +647,6 @@
         }
       }
     });
-
-    // Update strip item
-    var stripEntry = this._stripItems.get(terminalId);
-    if (stripEntry) {
-      var stripName = stripEntry.element.querySelector('.strip-name');
-      if (stripName) stripName.textContent = name;
-    }
-  };
-
-  LayoutEngine.prototype._clearHighlights = function () {
-    this._stripItems.forEach(function (entry) {
-      entry.element.classList.remove('strip-item-selected');
-    });
   };
 
   LayoutEngine.prototype.enterFullscreen = function (terminalId, connection) {
@@ -826,11 +729,7 @@
       }
     });
     if (!targetConn) {
-      // Check strip
-      var stripEntry = this._stripItems.get(terminalId);
-      if (stripEntry) {
-        targetConn = stripEntry.connection;
-      }
+      targetConn = this._minimized.get(terminalId) || null;
     }
 
     if (!targetConn) {
@@ -852,15 +751,15 @@
       return;
     }
 
-    // Move cell 0's current terminal to strip to make room
+    // Move cell 0's current terminal to minimized to make room
     if (cell0Info && cell0Info.connection) {
       cell0Info.connection.detach();
-      this._addToStrip(cell0Info.terminalId, cell0Info.connection);
+      this._addToMinimized(cell0Info.terminalId, cell0Info.connection);
       this._clearCell(this._cells[0]);
     }
 
-    // Pull target from strip and assign to the single cell
-    this._removeFromStrip(terminalId);
+    // Pull target from minimized and assign to the single cell
+    this._removeFromMinimized(terminalId);
     this.assignTerminal(this._cells[0], terminalId, targetConn);
   };
 
@@ -884,7 +783,7 @@
     var supersizedConn = (cell0Info && cell0Info.terminalId === supersizedId)
       ? cell0Info.connection : null;
 
-    // Find original cell index (-1 means terminal was in strip, not in grid)
+    // Find original cell index (-1 means terminal was minimized, not in grid)
     var supersizedOrigIndex = -1;
     if (supersizedConn) {
       for (var i = 0; i < saved.assignments.length; i++) {
@@ -922,22 +821,21 @@
         );
       }
 
-      // Restore other terminals from strip to their original cells
+      // Restore other terminals from minimized to their original cells
       saved.assignments.forEach(function (entry) {
         if (entry.terminalId === supersizedId) return; // already handled
         if (entry.cellIndex >= self._cells.length) return;
-        var stripEntry = self._stripItems.get(entry.terminalId);
-        if (!stripEntry) return;
-        var conn = stripEntry.connection;
-        self._removeFromStrip(entry.terminalId);
+        var conn = self._minimized.get(entry.terminalId);
+        if (!conn) return;
+        self._removeFromMinimized(entry.terminalId);
         self.assignTerminal(self._cells[entry.cellIndex], entry.terminalId, conn);
       });
     } else {
-      // --- Slow path: terminal was supersized from the strip or is missing ---
+      // --- Slow path: terminal was supersized from minimized or is missing ---
       // Fall back to the original detach/reattach logic.
       if (cell0Info && cell0Info.connection) {
         cell0Info.connection.detach();
-        this._addToStrip(cell0Info.terminalId, cell0Info.connection);
+        this._addToMinimized(cell0Info.terminalId, cell0Info.connection);
         this._clearCell(this._cells[0]);
       }
 
@@ -945,10 +843,9 @@
 
       saved.assignments.forEach(function (entry) {
         if (entry.cellIndex >= self._cells.length) return;
-        var stripEntry = self._stripItems.get(entry.terminalId);
-        if (!stripEntry) return;
-        var conn = stripEntry.connection;
-        self._removeFromStrip(entry.terminalId);
+        var conn = self._minimized.get(entry.terminalId);
+        if (!conn) return;
+        self._removeFromMinimized(entry.terminalId);
         self.assignTerminal(self._cells[entry.cellIndex], entry.terminalId, conn);
       });
     }

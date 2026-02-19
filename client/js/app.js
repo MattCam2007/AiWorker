@@ -51,8 +51,7 @@
   App.prototype._createEngine = function () {
     var self = this;
     var grid = document.getElementById('grid-container');
-    var strip = document.getElementById('minimized-strip');
-    this._engine = new ns.LayoutEngine(grid, strip);
+    this._engine = new ns.LayoutEngine(grid);
     this._engine._onCloseTerminal = function (id) {
       self._sendDestroyTerminal(id);
     };
@@ -218,9 +217,6 @@
       headerColor: headerColor || null
     });
 
-    conn._onActivity = function (termId) {
-      self._onActivity(termId);
-    };
     conn._onStatusChange = function () {
       self._updateStatus();
     };
@@ -253,8 +249,8 @@
       }
     }
 
-    // No empty cell — add to strip
-    this._engine._addToStrip(id, conn);
+    // No empty cell — minimize
+    this._engine._addToMinimized(id, conn);
   };
 
   // --- Session updates from server ---
@@ -297,7 +293,7 @@
         self._connections[id].destroy();
         if (self._engine) {
           self._engine._removeFromGrid(id);
-          self._engine._removeFromStrip(id);
+          self._engine._removeFromMinimized(id);
         }
         delete self._connections[id];
       }
@@ -543,47 +539,10 @@
 
     Object.keys(statuses).forEach(function (id) {
       var active = statuses[id];
-
-      if (self._engine && self._engine._stripItems.has(id)) {
-        var entry = self._engine._stripItems.get(id);
-        var dot = entry.element.querySelector('.strip-status');
-        if (dot) {
-          if (active) {
-            dot.classList.add('status-active');
-            dot.classList.remove('status-idle');
-          } else {
-            dot.classList.remove('status-active');
-            dot.classList.add('status-idle');
-          }
-        }
-
-        if (active) {
-          entry.element.classList.add('strip-item-active');
-          setTimeout(function () {
-            entry.element.classList.remove('strip-item-active');
-          }, 600);
-        }
-      }
-
-      // Update sidebar terminal list
       if (self._terminalList) {
         self._terminalList.updateActivity(id, active);
       }
     });
-  };
-
-  App.prototype._onActivity = function (id) {
-    if (this._engine && this._engine._stripItems.has(id)) {
-      var entry = this._engine._stripItems.get(id);
-      var preview = entry.element.querySelector('.strip-preview');
-      if (preview && this._connections[id]) {
-        preview.textContent = this._connections[id].getLastOutput();
-      }
-      entry.element.classList.add('strip-item-active');
-      setTimeout(function () {
-        entry.element.classList.remove('strip-item-active');
-      }, 600);
-    }
   };
 
   // --- Status indicator ---
@@ -702,7 +661,7 @@
       var emptyCell = this._engine._cells[j];
       var emptyInfo = this._engine._cellMap.get(emptyCell);
       if (emptyInfo && !emptyInfo.connection) {
-        this._engine._removeFromStrip(id);
+        this._engine._removeFromMinimized(id);
         this._engine.assignTerminal(emptyCell, id, conn);
         conn.refit();
         return;
