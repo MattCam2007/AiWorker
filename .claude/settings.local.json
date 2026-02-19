@@ -2,10 +2,6 @@
   "permissions": {
     "allow": [
       "Bash(npm install:*)",
-      "Bash(tmux:*)",
-      "Bash(while read s)",
-      "Bash(do tmux kill-session -t \"$s\")",
-      "Bash(done)",
       "Bash(git status:*)",
       "Bash(git add:*)",
       "Bash(git commit:*)",
@@ -31,7 +27,16 @@
       "Bash(grep:*)",
       "Bash(claude --version:*)",
       "Bash(python3:*)",
-      "Bash(claude mcp add --scope user context7 -- npx -y @upstash/context7-mcp)"
+      "Bash(claude mcp add --scope user context7 -- npx -y @upstash/context7-mcp)",
+      "Bash(git stash:*)",
+      "Bash(git stash pop:*)",
+      "Bash(npx jest:*)",
+      "Bash(docker compose build:*)",
+      "Bash(sudo docker compose build:*)",
+      "Bash(find:*)",
+      "Bash(env:*)",
+      "Bash(xargs cat:*)",
+      "Bash(wc:*)"
     ]
   }
 }

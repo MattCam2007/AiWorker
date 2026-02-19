@@ -23,6 +23,7 @@
     this._reconnectTimer = null;
     this._destroyed = false;
     this._detaching = false;
+    this._exited = false;
 
     // Callback hooks (set by App)
     this._onActivity = null;
@@ -119,11 +120,27 @@
           self._lastOutput = (self._lastOutput + stripped).slice(-80);
           if (self._onActivity) self._onActivity(self.id);
           break;
+        case 'exited':
+          self._exited = true;
+          if (self._terminal) {
+            self._terminal.write('\r\n\x1b[1;33m[Process exited');
+            if (msg.exitCode !== undefined && msg.exitCode !== null) {
+              self._terminal.write(' with code ' + msg.exitCode);
+            }
+            if (msg.signal) {
+              self._terminal.write(' (signal: ' + msg.signal + ')');
+            }
+            self._terminal.write(']\x1b[0m\r\n');
+          }
+          if (self._onStatusChange) self._onStatusChange(self.id, 'exited');
+          break;
       }
     });
 
-    this._ws.addEventListener('close', function () {
+    this._ws.addEventListener('close', function (event) {
       if (self._onStatusChange) self._onStatusChange(self.id, 'disconnected');
+      // Don't reconnect if the terminal process exited or was explicitly closed
+      if (self._exited || event.code === 4001) return;
       if (!self._destroyed && !self._detaching) {
         self._scheduleReconnect();
       }

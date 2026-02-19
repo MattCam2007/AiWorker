@@ -284,7 +284,7 @@ describe('LayoutEngine', function () {
     expect(newConn.refit.called).to.be.true;
   });
 
-  it('switching to smaller grid moves excess terminals to strip', function () {
+  it('switching to smaller grid moves only excess terminals to strip', function () {
     var grid = document.getElementById('grid-container');
     var strip = document.getElementById('minimized-strip');
     var engine = new LayoutEngine(grid, strip);
@@ -299,11 +299,70 @@ describe('LayoutEngine', function () {
     // Start with 2x2 (4 cells)
     engine.applyLayout({ grid: '2x2', cells: [['t1', 't2'], ['t3', 't4']] }, connections);
 
-    // Switch to 1x1 — should move excess to strip
+    // Switch to 1x1 — only terminals that don't fit should move to strip
     engine.setGrid('1x1');
 
-    // All 4 should be in strip now (setGrid detaches all)
-    expect(strip.querySelectorAll('.strip-item').length).to.equal(4);
+    // t1 stays at (0,0), t2/t3/t4 go to strip
+    expect(strip.querySelectorAll('.strip-item').length).to.equal(3);
+    var cellInfo = engine._cellMap.get(engine._cells[0]);
+    expect(cellInfo.terminalId).to.equal('t1');
+  });
+
+  it('growing grid preserves terminals at matching (row,col) positions', function () {
+    var grid = document.getElementById('grid-container');
+    var strip = document.getElementById('minimized-strip');
+    var engine = new LayoutEngine(grid, strip);
+
+    var connections = {
+      t1: makeConnection('t1', 'T1'),
+      t2: makeConnection('t2', 'T2'),
+      t3: makeConnection('t3', 'T3'),
+      t4: makeConnection('t4', 'T4')
+    };
+
+    // Start with 2x2
+    engine.applyLayout({ grid: '2x2', cells: [['t1', 't2'], ['t3', 't4']] }, connections);
+
+    // Switch to 3x2 — all 4 fit, no terminals should be minimized
+    engine.setGrid('3x2');
+
+    expect(strip.querySelectorAll('.strip-item').length).to.equal(0);
+    expect(engine._cells.length).to.equal(6);
+
+    // t1 stays at (0,0), t2 at (0,1), t3 at (1,0), t4 at (1,1)
+    expect(engine._cellMap.get(engine._cells[0]).terminalId).to.equal('t1');
+    expect(engine._cellMap.get(engine._cells[1]).terminalId).to.equal('t2');
+    expect(engine._cellMap.get(engine._cells[3]).terminalId).to.equal('t3');
+    expect(engine._cellMap.get(engine._cells[4]).terminalId).to.equal('t4');
+
+    // New positions (0,2) and (1,2) should be empty
+    expect(engine._cellMap.get(engine._cells[2]).connection).to.be.null;
+    expect(engine._cellMap.get(engine._cells[5]).connection).to.be.null;
+  });
+
+  it('shrinking grid keeps fitting terminals and minimizes the rest', function () {
+    var grid = document.getElementById('grid-container');
+    var strip = document.getElementById('minimized-strip');
+    var engine = new LayoutEngine(grid, strip);
+
+    var connections = {
+      t1: makeConnection('t1', 'T1'),
+      t2: makeConnection('t2', 'T2'),
+      t3: makeConnection('t3', 'T3'),
+      t4: makeConnection('t4', 'T4')
+    };
+
+    // Start with 2x2
+    engine.applyLayout({ grid: '2x2', cells: [['t1', 't2'], ['t3', 't4']] }, connections);
+
+    // Switch to 2x1 — only row 0 fits
+    engine.setGrid('2x1');
+
+    // t1 and t2 stay (row 0), t3 and t4 minimized (row 1)
+    expect(engine._cells.length).to.equal(2);
+    expect(engine._cellMap.get(engine._cells[0]).terminalId).to.equal('t1');
+    expect(engine._cellMap.get(engine._cells[1]).terminalId).to.equal('t2');
+    expect(strip.querySelectorAll('.strip-item').length).to.equal(2);
   });
 
   it('empty cell click with selection places the terminal', function () {

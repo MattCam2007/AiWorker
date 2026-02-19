@@ -61,81 +61,150 @@
     });
   };
 
+  LayoutEngine.prototype._createEmptyCell = function () {
+    var self = this;
+    var cell = document.createElement('div');
+    cell.className = 'grid-cell cell-empty';
+
+    var header = document.createElement('div');
+    header.className = 'cell-header';
+    header.style.display = 'none';
+    cell.appendChild(header);
+
+    var addBtn = document.createElement('button');
+    addBtn.className = 'cell-add-btn';
+    addBtn.textContent = '+';
+    addBtn.title = 'Create terminal';
+    (function (cellEl) {
+      addBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        if (self._onCreateTerminal) self._onCreateTerminal(cellEl);
+      });
+    })(cell);
+    cell.appendChild(addBtn);
+
+    var mount = document.createElement('div');
+    mount.className = 'cell-terminal';
+    cell.appendChild(mount);
+
+    // Click handler for swap/placement
+    (function (cellEl) {
+      cellEl.addEventListener('click', function (e) {
+        if (e.target.closest('.cell-terminal') && self._cellMap.get(cellEl) && self._cellMap.get(cellEl).connection) {
+          return;
+        }
+        self._handleCellClick(cellEl);
+      });
+    })(cell);
+
+    return cell;
+  };
+
+  LayoutEngine.prototype._clearCell = function (cell) {
+    var info = this._cellMap.get(cell);
+    if (info) {
+      info.connection = null;
+      info.terminalId = null;
+    }
+    cell.classList.add('cell-empty');
+    var header = cell.querySelector('.cell-header');
+    if (header) {
+      header.innerHTML = '';
+      header.style.display = 'none';
+      header.style.background = '';
+      header.style.color = '';
+    }
+    var mount = cell.querySelector('.cell-terminal');
+    if (mount) mount.innerHTML = '';
+  };
+
   LayoutEngine.prototype.setGrid = function (spec) {
     var preset = GRID_PRESETS[spec];
     if (!preset) return;
 
-    this._currentGrid = spec;
-    var cols = preset.cols;
-    var rows = preset.rows;
-
-    // Set CSS grid template
-    this._gridContainer.style.gridTemplateColumns = 'repeat(' + cols + ', 1fr)';
-    this._gridContainer.style.gridTemplateRows = 'repeat(' + rows + ', 1fr)';
-
-    // Detach current occupants and move to strip
+    var newCols = preset.cols;
+    var newRows = preset.rows;
+    var newTotal = newCols * newRows;
     var self = this;
+
+    // Determine old grid dimensions for (row, col) mapping
+    var oldCols = 1;
+    if (this._currentGrid && GRID_PRESETS[this._currentGrid]) {
+      oldCols = GRID_PRESETS[this._currentGrid].cols;
+    }
+
+    // Map old (row, col) positions to their cell elements
+    var oldPosMap = {};
+    this._cells.forEach(function (cell, index) {
+      var r = Math.floor(index / oldCols);
+      var c = index % oldCols;
+      oldPosMap[r + ',' + c] = cell;
+    });
+
+    this._currentGrid = spec;
+
+    // Update CSS grid template
+    this._gridContainer.style.gridTemplateColumns = 'repeat(' + newCols + ', 1fr)';
+    this._gridContainer.style.gridTemplateRows = 'repeat(' + newRows + ', 1fr)';
+
+    // Build new cells array, reusing old cells at matching (row, col) positions
+    var newCells = [];
+    var reused = new Set();
+
+    for (var i = 0; i < newTotal; i++) {
+      var r = Math.floor(i / newCols);
+      var c = i % newCols;
+      var oldCell = oldPosMap[r + ',' + c];
+
+      if (oldCell) {
+        // Reuse existing cell — terminal stays attached, no detach/reattach
+        reused.add(oldCell);
+        newCells.push(oldCell);
+      } else {
+        // New position — create empty cell
+        var cell = this._createEmptyCell();
+        this._cellMap.set(cell, { connection: null, terminalId: null });
+        newCells.push(cell);
+      }
+    }
+
+    // Minimize terminals on old cells that don't fit in the new grid
     this._cells.forEach(function (cell) {
-      var info = self._cellMap.get(cell);
-      if (info && info.connection) {
-        info.connection.detach();
-        self._addToStrip(info.terminalId, info.connection);
+      if (!reused.has(cell)) {
+        var info = self._cellMap.get(cell);
+        if (info && info.connection) {
+          info.connection.detach();
+          self._addToStrip(info.terminalId, info.connection);
+        }
+        self._cellMap.delete(cell);
+        cell.remove();
       }
     });
 
-    // Clear grid
-    this._gridContainer.innerHTML = '';
-    this._cells = [];
-    this._cellMap = new Map();
-
-    // Create cells
-    var total = cols * rows;
-    for (var i = 0; i < total; i++) {
-      var cell = document.createElement('div');
-      cell.className = 'grid-cell cell-empty';
-
-      var header = document.createElement('div');
-      header.className = 'cell-header';
-      header.style.display = 'none';
-      cell.appendChild(header);
-
-      var addBtn = document.createElement('button');
-      addBtn.className = 'cell-add-btn';
-      addBtn.textContent = '+';
-      addBtn.title = 'Create terminal';
-      (function (cellEl) {
-        addBtn.addEventListener('click', function (e) {
-          e.stopPropagation();
-          if (self._onCreateTerminal) self._onCreateTerminal(cellEl);
-        });
-      })(cell);
-      cell.appendChild(addBtn);
-
-      var mount = document.createElement('div');
-      mount.className = 'cell-terminal';
-      cell.appendChild(mount);
-
-      this._gridContainer.appendChild(cell);
-      this._cells.push(cell);
-      this._cellMap.set(cell, { connection: null, terminalId: null });
-
-      // Click handler for swap/placement
-      (function (cellEl) {
-        cellEl.addEventListener('click', function (e) {
-          // Don't intercept clicks on the terminal itself
-          if (e.target.closest('.cell-terminal') && self._cellMap.get(cellEl).connection) {
-            return;
-          }
-          self._handleCellClick(cellEl);
-        });
-      })(cell);
+    // Reorder DOM — appendChild moves existing children to the correct position
+    for (var j = 0; j < newCells.length; j++) {
+      this._gridContainer.appendChild(newCells[j]);
     }
 
+    this._cells = newCells;
+
+    // Refit all terminals to their new cell dimensions
+    this.refitAll();
     if (this._onLayoutChange) this._onLayoutChange();
   };
 
   LayoutEngine.prototype.applyLayout = function (layoutConfig, connections) {
     if (!layoutConfig) return;
+
+    // Detach all current terminals for a clean layout replacement
+    var self = this;
+    this._cells.forEach(function (cell) {
+      var info = self._cellMap.get(cell);
+      if (info && info.connection) {
+        info.connection.detach();
+        self._clearCell(cell);
+      }
+    });
 
     this.setGrid(layoutConfig.grid);
 
@@ -158,7 +227,6 @@
     }
 
     // Put unassigned terminals in strip
-    var self = this;
     Object.keys(connections).forEach(function (id) {
       if (!assigned.has(id)) {
         self._addToStrip(id, connections[id]);
@@ -357,16 +425,7 @@
     this._cells.forEach(function (cell) {
       var info = self._cellMap.get(cell);
       if (info && info.terminalId === terminalId) {
-        info.connection = null;
-        info.terminalId = null;
-        cell.classList.add('cell-empty');
-        var header = cell.querySelector('.cell-header');
-        if (header) {
-          header.innerHTML = '';
-          header.style.display = 'none';
-        }
-        var mount = cell.querySelector('.cell-terminal');
-        if (mount) mount.innerHTML = '';
+        self._clearCell(cell);
       }
     });
   };
@@ -755,7 +814,7 @@
     };
     this._supersizeTerminalId = terminalId;
 
-    // Find the target connection before setGrid detaches everything
+    // Find the target connection before setGrid modifies state
     var targetConn = null;
     this._cells.forEach(function (cell) {
       var info = self._cellMap.get(cell);
@@ -777,11 +836,26 @@
       return;
     }
 
-    // Switch to 1x1 — this detaches all terminals to strip
+    // Switch to 1x1 — keeps cell 0's terminal, strips cells 1+
     this.setGrid('1x1');
 
     // Add supersized class
     this._gridContainer.classList.add('grid-container-supersized');
+
+    // If target is already in cell 0, just refit
+    var cell0Info = this._cellMap.get(this._cells[0]);
+    if (cell0Info && cell0Info.terminalId === terminalId) {
+      targetConn.refit();
+      targetConn.focus();
+      return;
+    }
+
+    // Move cell 0's current terminal to strip to make room
+    if (cell0Info && cell0Info.connection) {
+      cell0Info.connection.detach();
+      this._addToStrip(cell0Info.terminalId, cell0Info.connection);
+      this._clearCell(this._cells[0]);
+    }
 
     // Pull target from strip and assign to the single cell
     this._removeFromStrip(terminalId);
@@ -798,10 +872,18 @@
     // Remove supersized class
     this._gridContainer.classList.remove('grid-container-supersized');
 
-    // Restore grid — this detaches all terminals to strip
+    // Detach the supersized terminal from cell 0 and add to strip
+    var cell0Info = this._cellMap.get(this._cells[0]);
+    if (cell0Info && cell0Info.connection) {
+      cell0Info.connection.detach();
+      this._addToStrip(cell0Info.terminalId, cell0Info.connection);
+      this._clearCell(this._cells[0]);
+    }
+
+    // Restore grid — cell 0 is empty, new cells are added as needed
     this.setGrid(saved.grid);
 
-    // Restore saved assignments
+    // Restore saved assignments from strip
     var self = this;
     saved.assignments.forEach(function (entry) {
       if (entry.cellIndex >= self._cells.length) return;

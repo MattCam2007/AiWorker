@@ -39,12 +39,8 @@ describe('App', function () {
         '<button class="fullscreen-close"></button>' +
         '<div class="fullscreen-terminal"></div>' +
         '</div>' +
-        '<div id="ephemeral-dialog" class="hidden">' +
-        '<input class="ephemeral-name" />' +
-        '<input class="ephemeral-command" />' +
-        '<button class="ephemeral-create">Create</button>' +
-        '<button class="ephemeral-cancel">Cancel</button>' +
-        '</div>' +
+        '<div id="ephemeral-dialog" class="hidden"></div>' +
+        '<div id="ephemeral-backdrop" class="hidden"></div>' +
         '</body></html>',
       { url: 'http://localhost:3000' }
     );
@@ -118,6 +114,15 @@ describe('App', function () {
       this._removeFromStrip = sinon.stub();
       this._removeFromGrid = sinon.stub();
       this.updateHeader = sinon.stub();
+      this.clearSupersize = sinon.stub();
+      this._createColorSwatches = function (activeColor, onSelect) {
+        var container = document.createElement('div');
+        container.className = 'edit-swatches';
+        var swatch = document.createElement('button');
+        swatch.className = 'edit-swatch';
+        container.appendChild(swatch);
+        return container;
+      };
     };
     window.TerminalDeck.LayoutEngine.GRID_PRESETS = {
       '1x1': { cols: 1, rows: 1 },
@@ -223,6 +228,36 @@ describe('App', function () {
 
       addBtn.click();
       expect(dialog.classList.contains('hidden')).to.be.false;
+      // Dialog should have title and form fields
+      expect(dialog.querySelector('.ephemeral-title')).to.exist;
+      expect(dialog.querySelector('.edit-name-input')).to.exist;
+      expect(dialog.querySelector('.edit-save')).to.exist;
+      expect(dialog.querySelector('.edit-cancel')).to.exist;
+    });
+  });
+
+  it('create dialog has color swatches', function () {
+    var app = new App();
+    return app.init().then(function () {
+      document.getElementById('add-terminal-btn').click();
+      var dialog = document.getElementById('ephemeral-dialog');
+      var swatchContainers = dialog.querySelectorAll('.edit-swatches');
+      expect(swatchContainers.length).to.equal(2);
+    });
+  });
+
+  it('create dialog has command info button and tooltip', function () {
+    var app = new App();
+    return app.init().then(function () {
+      document.getElementById('add-terminal-btn').click();
+      var dialog = document.getElementById('ephemeral-dialog');
+      var infoBtn = dialog.querySelector('.ephemeral-info-btn');
+      expect(infoBtn).to.exist;
+      var tip = dialog.querySelector('.ephemeral-info-tip');
+      expect(tip).to.exist;
+      expect(tip.classList.contains('hidden')).to.be.true;
+      infoBtn.click();
+      expect(tip.classList.contains('hidden')).to.be.false;
     });
   });
 
@@ -232,12 +267,13 @@ describe('App', function () {
       // Wait for control WS to open
       return new Promise(function (resolve) { setTimeout(resolve, 10); });
     }).then(function () {
-      var nameInput = document.querySelector('.ephemeral-name');
-      var cmdInput = document.querySelector('.ephemeral-command');
-      nameInput.value = 'Test Terminal';
-      cmdInput.value = 'htop';
+      document.getElementById('add-terminal-btn').click();
+      var dialog = document.getElementById('ephemeral-dialog');
+      var inputs = dialog.querySelectorAll('.edit-name-input');
+      inputs[0].value = 'Test Terminal';
+      inputs[1].value = 'htop';
 
-      document.querySelector('.ephemeral-create').click();
+      dialog.querySelector('.edit-save').click();
 
       var sent = app._controlWs._sent;
       expect(sent.length).to.be.greaterThan(0);

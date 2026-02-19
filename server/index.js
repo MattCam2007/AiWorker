@@ -5,6 +5,7 @@ const { ConfigManager } = require('./config');
 const { SessionManager } = require('./sessions');
 const { TerminalWSServer } = require('./websocket');
 const { listDirectory } = require('./filetree');
+const log = require('./log');
 
 const MIME_TYPES = {
   '.html': 'text/html',
@@ -104,13 +105,18 @@ async function createApp(options = {}) {
   const wsServer = new TerminalWSServer(server, sessionManager);
   wsServer.startActivityBroadcasting();
 
+  sessionManager._onSessionDied = (id, name) => {
+    wsServer._broadcastSessions();
+  };
+  sessionManager.startHealthCheck();
+
   // Config hot-reload (settings/theme only)
   configManager.watch();
   configManager.on('change', (newConfig) => {
     wsServer.broadcastConfigReload(newConfig);
   });
   configManager.on('error', (err) => {
-    console.error('Config error (retaining last valid config):', err.message);
+    log.error('Config error (retaining last valid config):', err.message);
   });
 
   const actualPort = await new Promise((resolve) => {
@@ -128,6 +134,7 @@ async function createApp(options = {}) {
     close() {
       return new Promise((resolve) => {
         configManager.stopWatching();
+        sessionManager.stopHealthCheck();
         wsServer.closeAll();
         server.close(resolve);
       });
@@ -138,18 +145,24 @@ async function createApp(options = {}) {
 // If run directly (not required as module)
 if (require.main === module) {
   createApp().then((app) => {
-    console.log(`TerminalDeck running on http://localhost:${app.port}`);
+    log.log(`TerminalDeck running on http://localhost:${app.port}`);
 
     const shutdown = async () => {
-      console.log('Shutting down...');
+      log.log('Shutting down...');
       await app.close();
       process.exit(0);
     };
 
     process.on('SIGTERM', shutdown);
     process.on('SIGINT', shutdown);
+    process.on('uncaughtException', (err) => {
+      log.error('[fatal] uncaught exception:', err);
+    });
+    process.on('unhandledRejection', (reason) => {
+      log.error('[fatal] unhandled rejection:', reason);
+    });
   }).catch((err) => {
-    console.error('Failed to start TerminalDeck:', err);
+    log.error('Failed to start TerminalDeck:', err);
     process.exit(1);
   });
 }
