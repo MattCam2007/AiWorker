@@ -53,14 +53,31 @@
     // Open terminal in element
     this._terminal.open(el);
 
-    // Defer fit() so the browser can calculate layout dimensions first.
-    // Calling fit() synchronously after open() reads stale/zero sizes when
-    // the container's geometry is still settling (e.g. header just shown,
-    // strip appearing/disappearing via CSS :empty).
+    // Defer fit() until xterm's render service has measured character cell
+    // dimensions.  A single requestAnimationFrame is NOT enough — xterm may
+    // need one full paint cycle before proposeDimensions() can return valid
+    // cell metrics.  If fit() is called too early, proposeDimensions() returns
+    // undefined and fit() silently becomes a no-op, leaving the terminal at
+    // its default 80×24 size (footer / status-bar appears mid-container).
+    //
+    // We retry across successive animation frames until proposeDimensions()
+    // succeeds or we exhaust retries.
     var self = this;
+    function tryFit(retriesLeft) {
+      if (!self._fitAddon || !self._terminal) return;
+      var dims = self._fitAddon.proposeDimensions();
+      if (dims) {
+        self._fitAddon.fit();
+        self._sendResize();
+      } else if (retriesLeft > 0) {
+        requestAnimationFrame(function () {
+          tryFit(retriesLeft - 1);
+        });
+      }
+    }
     if (typeof requestAnimationFrame !== 'undefined') {
       requestAnimationFrame(function () {
-        if (self._fitAddon) self._fitAddon.fit();
+        tryFit(5);
       });
     } else {
       this._fitAddon.fit();

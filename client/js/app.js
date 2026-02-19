@@ -398,8 +398,8 @@
         if (self._engine) {
           self._engine._cells.forEach(function (cell) {
             var info = self._engine._cellMap.get(cell);
-            if (info && info.connection && info.connection.fit) {
-              info.connection.fit();
+            if (info && info.connection) {
+              info.connection.refit();
             }
           });
         }
