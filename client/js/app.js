@@ -66,8 +66,7 @@
     };
     this._engine._onCreateTerminal = function (cell) {
       self._pendingCell = cell;
-      var dialog = document.getElementById('ephemeral-dialog');
-      if (dialog) dialog.classList.remove('hidden');
+      self._showCreateDialog();
     };
     this._engine.setGrid('2x2');
   };
@@ -140,10 +139,16 @@
     });
   };
 
-  App.prototype._sendCreateTerminal = function (name, command) {
+  App.prototype._sendCreateTerminal = function (name, command, headerBg, headerColor) {
     if (this._controlWs && this._controlWs.readyState === WebSocket.OPEN) {
       this._controlWs.send(
-        JSON.stringify({ type: 'create_terminal', name: name, command: command })
+        JSON.stringify({
+          type: 'create_terminal',
+          name: name,
+          command: command,
+          headerBg: headerBg || null,
+          headerColor: headerColor || null
+        })
       );
     }
   };
@@ -308,38 +313,202 @@
   App.prototype._wireCreateDialog = function () {
     var self = this;
     var addBtn = document.getElementById('add-terminal-btn');
-    var dialog = document.getElementById('ephemeral-dialog');
 
-    if (!addBtn || !dialog) return;
+    if (!addBtn) return;
 
     addBtn.addEventListener('click', function () {
-      dialog.classList.toggle('hidden');
+      self._showCreateDialog();
+    });
+  };
+
+  App.prototype._showCreateDialog = function () {
+    var self = this;
+    var dialog = document.getElementById('ephemeral-dialog');
+    var backdrop = document.getElementById('ephemeral-backdrop');
+    if (!dialog) return;
+
+    // Build dialog contents
+    dialog.innerHTML = '';
+
+    var title = document.createElement('div');
+    title.className = 'ephemeral-title';
+    title.textContent = 'New Terminal';
+    dialog.appendChild(title);
+
+    // Name field
+    var nameLabel = document.createElement('label');
+    nameLabel.className = 'edit-label';
+    nameLabel.textContent = 'Name';
+    dialog.appendChild(nameLabel);
+
+    var nameInput = document.createElement('input');
+    nameInput.className = 'edit-name-input';
+    nameInput.type = 'text';
+    nameInput.placeholder = 'Session name';
+    nameInput.value = self._nextDefaultName();
+    dialog.appendChild(nameInput);
+
+    // Command field with info icon
+    var cmdLabelRow = document.createElement('div');
+    cmdLabelRow.className = 'ephemeral-label-row';
+
+    var cmdLabel = document.createElement('label');
+    cmdLabel.className = 'edit-label';
+    cmdLabel.textContent = 'Command';
+    cmdLabelRow.appendChild(cmdLabel);
+
+    var infoBtn = document.createElement('button');
+    infoBtn.className = 'ephemeral-info-btn';
+    infoBtn.type = 'button';
+    infoBtn.textContent = 'i';
+    infoBtn.title = 'Command help';
+    cmdLabelRow.appendChild(infoBtn);
+
+    dialog.appendChild(cmdLabelRow);
+
+    var cmdInput = document.createElement('input');
+    cmdInput.className = 'edit-name-input';
+    cmdInput.type = 'text';
+    cmdInput.placeholder = 'Optional';
+    dialog.appendChild(cmdInput);
+
+    // Info tooltip (hidden by default)
+    var infoTip = document.createElement('div');
+    infoTip.className = 'ephemeral-info-tip hidden';
+    infoTip.innerHTML =
+      '<strong>Command</strong> sets the initial process for this terminal session. ' +
+      'Leave blank to start your default shell.<br><br>' +
+      '<strong>Examples:</strong><br>' +
+      '<code>htop</code> &mdash; system monitor<br>' +
+      '<code>python3</code> &mdash; Python REPL<br>' +
+      '<code>tail -f /var/log/syslog</code> &mdash; follow a log<br>' +
+      '<code>ssh user@host</code> &mdash; remote connection<br><br>' +
+      'The command runs inside a tmux session. When the command exits, the terminal closes.';
+    dialog.appendChild(infoTip);
+
+    infoBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      infoTip.classList.toggle('hidden');
     });
 
-    var createBtn = dialog.querySelector('.ephemeral-create');
-    var cancelBtn = dialog.querySelector('.ephemeral-cancel');
-    var nameInput = dialog.querySelector('.ephemeral-name');
-    var cmdInput = dialog.querySelector('.ephemeral-command');
+    // Header background color
+    var selectedBg = null;
+    if (this._engine) {
+      var bgLabel = document.createElement('label');
+      bgLabel.className = 'edit-label';
+      bgLabel.textContent = 'Header Background';
+      dialog.appendChild(bgLabel);
 
-    if (createBtn) {
-      createBtn.addEventListener('click', function () {
-        var name = nameInput ? nameInput.value.trim() : '';
-        var command = cmdInput ? cmdInput.value.trim() : '';
-        if (!name) return;
-
-        self._sendCreateTerminal(name, command);
-        dialog.classList.add('hidden');
-        if (nameInput) nameInput.value = '';
-        if (cmdInput) cmdInput.value = '';
+      var bgSwatches = this._engine._createColorSwatches(null, function (color) {
+        selectedBg = color;
       });
+      dialog.appendChild(bgSwatches);
+
+      // Header text color
+      var selectedColor = null;
+      var textLabel = document.createElement('label');
+      textLabel.className = 'edit-label';
+      textLabel.textContent = 'Header Text';
+      dialog.appendChild(textLabel);
+
+      var textSwatches = this._engine._createColorSwatches(null, function (color) {
+        selectedColor = color;
+      });
+      dialog.appendChild(textSwatches);
     }
 
-    if (cancelBtn) {
-      cancelBtn.addEventListener('click', function () {
-        dialog.classList.add('hidden');
+    // Buttons
+    var btnRow = document.createElement('div');
+    btnRow.className = 'edit-btn-row';
+
+    var cancelBtn = document.createElement('button');
+    cancelBtn.className = 'edit-cancel';
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      closeDialog();
+      self._pendingCell = null;
+    });
+    btnRow.appendChild(cancelBtn);
+
+    var createBtn = document.createElement('button');
+    createBtn.className = 'edit-save';
+    createBtn.textContent = 'Create';
+    createBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      var name = nameInput.value.trim();
+      if (!name) {
+        nameInput.style.borderColor = 'var(--td-danger)';
+        nameInput.focus();
+        return;
+      }
+      var command = cmdInput.value.trim();
+      self._sendCreateTerminal(name, command, selectedBg, selectedColor);
+      closeDialog();
+    });
+    btnRow.appendChild(createBtn);
+
+    dialog.appendChild(btnRow);
+
+    // Enter key submits from either input
+    function onEnter(e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        createBtn.click();
+      }
+    }
+    nameInput.addEventListener('keydown', onEnter);
+    cmdInput.addEventListener('keydown', onEnter);
+
+    // Show dialog
+    dialog.classList.remove('hidden');
+    if (backdrop) backdrop.classList.remove('hidden');
+    nameInput.focus();
+    nameInput.select();
+
+    // Close helper
+    function closeDialog() {
+      dialog.classList.add('hidden');
+      if (backdrop) backdrop.classList.add('hidden');
+      dialog.innerHTML = '';
+    }
+
+    // Close on backdrop click
+    if (backdrop) {
+      var onBackdropClick = function () {
+        closeDialog();
         self._pendingCell = null;
-      });
+        backdrop.removeEventListener('click', onBackdropClick);
+      };
+      backdrop.addEventListener('click', onBackdropClick);
     }
+
+    // Close on Escape
+    var onEsc = function (e) {
+      if (e.key === 'Escape') {
+        closeDialog();
+        self._pendingCell = null;
+        document.removeEventListener('keydown', onEsc);
+      }
+    };
+    document.addEventListener('keydown', onEsc);
+  };
+
+  // --- Default terminal name ---
+
+  App.prototype._nextDefaultName = function () {
+    var existing = Object.keys(this._connections);
+    var max = 0;
+    existing.forEach(function (id) {
+      var conn = this._connections[id];
+      var name = (conn.config && conn.config.name) || '';
+      var m = name.match(/^Terminal\s+(\d+)$/);
+      if (m) {
+        var n = parseInt(m[1], 10);
+        if (n > max) max = n;
+      }
+    }.bind(this));
+    return 'Terminal ' + (max + 1);
   };
 
   // --- Empty state ---
