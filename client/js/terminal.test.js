@@ -120,50 +120,37 @@ describe('TerminalConnection', function () {
     }, 10);
   });
 
-  it('attach() retries fit when proposeDimensions initially returns undefined', function (done) {
-    // Simulate xterm needing multiple frames to render (cell dims start at 0)
+  it('attach() uses double-rAF to defer fit until after a full render cycle', function (done) {
+    // Collect rAF callbacks instead of executing them synchronously
     var rafCallbacks = [];
     global.requestAnimationFrame = function (cb) {
       rafCallbacks.push(cb);
     };
 
-    var tc = new window.TerminalDeck.TerminalConnection('retry-test', {});
+    var tc = new window.TerminalDeck.TerminalConnection('dblraf-test', {});
     var el = window.document.getElementById('mount');
     tc.attach(el);
 
-    // Make proposeDimensions return undefined for the first 2 calls,
-    // then return valid dimensions (simulating xterm needing time to render)
     var fitAddon = window._lastFitAddon;
-    var callCount = 0;
-    fitAddon.proposeDimensions = sinon.stub().callsFake(function () {
-      callCount++;
-      if (callCount <= 2) return undefined;
-      return { cols: 80, rows: 24 };
-    });
     fitAddon.fit.resetHistory();
 
-    // Execute first rAF — proposeDimensions returns undefined, should schedule retry
+    // First rAF should schedule the inner rAF, NOT call fit yet
     expect(rafCallbacks.length).to.equal(1);
     rafCallbacks.shift()();
     expect(fitAddon.fit.callCount).to.equal(0);
 
-    // Execute second rAF — still undefined, should schedule another retry
-    expect(rafCallbacks.length).to.equal(1);
-    rafCallbacks.shift()();
-    expect(fitAddon.fit.callCount).to.equal(0);
-
-    // Execute third rAF — proposeDimensions returns valid dims, fit should be called
+    // Second (inner) rAF should call fit
     expect(rafCallbacks.length).to.equal(1);
     rafCallbacks.shift()();
     expect(fitAddon.fit.callCount).to.equal(1);
 
-    // No more retries needed
+    // No more rAFs queued
     expect(rafCallbacks.length).to.equal(0);
 
     setTimeout(function () {
       tc.destroy();
       done();
-    }, 10);
+    }, 150);
   });
 
   it('attach() opens WebSocket to correct URL', function (done) {

@@ -157,10 +157,13 @@
     });
     this._updateEmptyState();
 
-    // Refit after DOM settles to ensure terminals fill their containers
+    // Refit after the browser completes a full rendering cycle.
+    // Double-rAF ensures container geometry is finalized before measuring.
     if (typeof requestAnimationFrame !== 'undefined') {
       requestAnimationFrame(function () {
-        if (self._engine) self._engine.refitAll();
+        requestAnimationFrame(function () {
+          if (self._engine) self._engine.refitAll();
+        });
       });
     }
   };
@@ -215,10 +218,12 @@
       }
     });
 
-    // Refit after DOM settles to ensure terminals fill their containers
+    // Refit after the browser completes a full rendering cycle.
     if (typeof requestAnimationFrame !== 'undefined') {
       requestAnimationFrame(function () {
-        if (self._engine) self._engine.refitAll();
+        requestAnimationFrame(function () {
+          if (self._engine) self._engine.refitAll();
+        });
       });
     }
 

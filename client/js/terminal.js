@@ -53,35 +53,27 @@
     // Open terminal in element
     this._terminal.open(el);
 
-    // Defer fit() until xterm's render service has measured character cell
-    // dimensions.  A single requestAnimationFrame is NOT enough — xterm may
-    // need one full paint cycle before proposeDimensions() can return valid
-    // cell metrics.  If fit() is called too early, proposeDimensions() returns
-    // undefined and fit() silently becomes a no-op, leaving the terminal at
-    // its default 80×24 size (footer / status-bar appears mid-container).
-    //
-    // We retry across successive animation frames until proposeDimensions()
-    // succeeds or we exhaust retries.
+    // Defer fit() until the browser has completed a full rendering cycle.
+    // A single requestAnimationFrame is NOT enough — rAF fires BEFORE the
+    // browser paints, so the container geometry (flex/grid heights) may not
+    // be finalized.  Double-rAF ensures one full style → layout → paint
+    // cycle has completed before we measure.  A setTimeout safety-net covers
+    // edge cases (slow font loading, complex layout recalculations).
     var self = this;
-    function tryFit(retriesLeft) {
-      if (!self._fitAddon || !self._terminal) return;
-      var dims = self._fitAddon.proposeDimensions();
-      if (dims) {
+    function doFit() {
+      if (self._fitAddon && self._terminal) {
         self._fitAddon.fit();
         self._sendResize();
-      } else if (retriesLeft > 0) {
-        requestAnimationFrame(function () {
-          tryFit(retriesLeft - 1);
-        });
       }
     }
     if (typeof requestAnimationFrame !== 'undefined') {
       requestAnimationFrame(function () {
-        tryFit(5);
+        requestAnimationFrame(doFit);
       });
     } else {
       this._fitAddon.fit();
     }
+    setTimeout(doFit, 100);
 
     // Connect WebSocket
     this._connectWS();

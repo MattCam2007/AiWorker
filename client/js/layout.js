@@ -142,10 +142,13 @@
       }
     });
 
-    // Refit after layout settles
+    // Refit after layout settles — double-rAF ensures one full rendering
+    // cycle has completed before measuring container dimensions.
     if (typeof requestAnimationFrame !== 'undefined') {
       requestAnimationFrame(function () {
-        self.refitAll();
+        requestAnimationFrame(function () {
+          self.refitAll();
+        });
       });
     }
   };
@@ -186,10 +189,13 @@
     this._removeFromStrip(terminalId);
 
     // Schedule a deferred refit to catch any layout shifts from strip
-    // visibility changes or header display changes.
+    // visibility changes or header display changes.  Double-rAF ensures
+    // the browser has completed at least one full rendering cycle.
     if (typeof requestAnimationFrame !== 'undefined') {
       requestAnimationFrame(function () {
-        connection.refit();
+        requestAnimationFrame(function () {
+          connection.refit();
+        });
       });
     }
   };

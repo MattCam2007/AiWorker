@@ -430,8 +430,8 @@ describe('App', function () {
         { id: 't3', name: 'New' }
       ]);
 
-      // Execute queued rAF callbacks
-      rafCallbacks.forEach(function (cb) { cb(); });
+      // Drain all rAF callbacks (double-rAF means outer callbacks schedule inner ones)
+      while (rafCallbacks.length > 0) { rafCallbacks.shift()(); }
 
       expect(app._engine.refitAll.callCount).to.be.greaterThan(callsBefore);
     });
@@ -448,8 +448,8 @@ describe('App', function () {
       // refitAll should not have been called yet (rAF is deferred)
       var callsBefore = app._engine.refitAll.callCount;
 
-      // Execute all queued rAF callbacks
-      rafCallbacks.forEach(function (cb) { cb(); });
+      // Drain all rAF callbacks (double-rAF means outer callbacks schedule inner ones)
+      while (rafCallbacks.length > 0) { rafCallbacks.shift()(); }
 
       expect(app._engine.refitAll.callCount).to.be.greaterThan(callsBefore);
     });
