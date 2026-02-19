@@ -81,6 +81,7 @@
       btn.textContent = spec;
       btn.dataset.preset = spec;
       btn.addEventListener('click', function () {
+        self._engine.clearSupersize();
         self._engine.setGrid(spec);
         self._setActivePreset(btn, presetsContainer);
       });

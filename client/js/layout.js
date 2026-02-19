@@ -29,6 +29,8 @@
     this._onMinimizeTerminal = null;
     this._onUpdateTerminal = null;
     this._onLayoutChange = null;
+    this._supersizeState = null;
+    this._supersizeTerminalId = null;
 
     this._initResizeObserver();
     this._initKeyboardListeners();
@@ -49,8 +51,12 @@
   LayoutEngine.prototype._initKeyboardListeners = function () {
     var self = this;
     document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape' && self._fullscreenConnection) {
-        self.exitFullscreen();
+      if (e.key === 'Escape') {
+        if (self._fullscreenConnection) {
+          self.exitFullscreen();
+        } else if (self._supersizeState) {
+          self.exitSupersize();
+        }
       }
     });
   };
@@ -189,6 +195,28 @@
       self._showEditPopover(cell, terminalId, connection);
     });
     header.appendChild(editBtn);
+
+    if (this._supersizeState) {
+      var exitSupersizeBtn = document.createElement('button');
+      exitSupersizeBtn.className = 'cell-header-exit-supersize';
+      exitSupersizeBtn.innerHTML = '&#x2921;';
+      exitSupersizeBtn.title = 'Exit Supersize';
+      exitSupersizeBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        self.exitSupersize();
+      });
+      header.appendChild(exitSupersizeBtn);
+    } else {
+      var supersizeBtn = document.createElement('button');
+      supersizeBtn.className = 'cell-header-supersize';
+      supersizeBtn.innerHTML = '&#x2922;';
+      supersizeBtn.title = 'Supersize';
+      supersizeBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        self.supersize(terminalId);
+      });
+      header.appendChild(supersizeBtn);
+    }
 
     var minimizeBtn = document.createElement('button');
     minimizeBtn.className = 'cell-header-minimize';
@@ -691,6 +719,95 @@
 
     this._fullscreenConnection = null;
     this._fullscreenOrigCell = null;
+  };
+
+  LayoutEngine.prototype.supersize = function (terminalId) {
+    // If already supersized, exit first
+    if (this._supersizeState) {
+      this.exitSupersize();
+    }
+
+    // Snapshot current layout
+    var assignments = [];
+    var self = this;
+    this._cells.forEach(function (cell, index) {
+      var info = self._cellMap.get(cell);
+      if (info && info.connection) {
+        assignments.push({ cellIndex: index, terminalId: info.terminalId });
+      }
+    });
+
+    this._supersizeState = {
+      grid: this._currentGrid,
+      assignments: assignments
+    };
+    this._supersizeTerminalId = terminalId;
+
+    // Find the target connection before setGrid detaches everything
+    var targetConn = null;
+    this._cells.forEach(function (cell) {
+      var info = self._cellMap.get(cell);
+      if (info && info.terminalId === terminalId) {
+        targetConn = info.connection;
+      }
+    });
+    if (!targetConn) {
+      // Check strip
+      var stripEntry = this._stripItems.get(terminalId);
+      if (stripEntry) {
+        targetConn = stripEntry.connection;
+      }
+    }
+
+    if (!targetConn) {
+      this._supersizeState = null;
+      this._supersizeTerminalId = null;
+      return;
+    }
+
+    // Switch to 1x1 — this detaches all terminals to strip
+    this.setGrid('1x1');
+
+    // Add supersized class
+    this._gridContainer.classList.add('grid-container-supersized');
+
+    // Pull target from strip and assign to the single cell
+    this._removeFromStrip(terminalId);
+    this.assignTerminal(this._cells[0], terminalId, targetConn);
+  };
+
+  LayoutEngine.prototype.exitSupersize = function () {
+    if (!this._supersizeState) return;
+
+    var saved = this._supersizeState;
+    this._supersizeState = null;
+    this._supersizeTerminalId = null;
+
+    // Remove supersized class
+    this._gridContainer.classList.remove('grid-container-supersized');
+
+    // Restore grid — this detaches all terminals to strip
+    this.setGrid(saved.grid);
+
+    // Restore saved assignments
+    var self = this;
+    saved.assignments.forEach(function (entry) {
+      if (entry.cellIndex >= self._cells.length) return;
+      var stripEntry = self._stripItems.get(entry.terminalId);
+      if (!stripEntry) return; // terminal was closed
+      var conn = stripEntry.connection;
+      self._removeFromStrip(entry.terminalId);
+      self.assignTerminal(self._cells[entry.cellIndex], entry.terminalId, conn);
+    });
+
+    this.refitAll();
+  };
+
+  LayoutEngine.prototype.clearSupersize = function () {
+    if (!this._supersizeState) return;
+    this._supersizeState = null;
+    this._supersizeTerminalId = null;
+    this._gridContainer.classList.remove('grid-container-supersized');
   };
 
   LayoutEngine.prototype.refitAll = function () {
