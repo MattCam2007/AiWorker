@@ -194,6 +194,17 @@
     this._element = null;
   };
 
+  /**
+   * Move the live xterm DOM into a new mount element without destroying
+   * the terminal instance or closing the WebSocket.
+   */
+  TerminalConnection.prototype.moveTo = function (newMount) {
+    if (this._terminal && this._terminal.element) {
+      newMount.appendChild(this._terminal.element);
+    }
+    this._element = newMount;
+  };
+
   TerminalConnection.prototype.refit = function () {
     if (this._fitAddon) {
       this._fitAddon.fit();

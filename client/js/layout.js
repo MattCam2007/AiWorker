@@ -244,9 +244,10 @@
     }
   };
 
-  LayoutEngine.prototype.assignTerminal = function (cell, terminalId, connection) {
+  LayoutEngine.prototype.assignTerminal = function (cell, terminalId, connection, options) {
     var mount = cell.querySelector('.cell-terminal');
     var header = cell.querySelector('.cell-header');
+    var skipAttach = options && options.skipAttach;
 
     cell.classList.remove('cell-empty');
     this._cellMap.set(cell, { connection: connection, terminalId: terminalId });
@@ -327,8 +328,10 @@
       header.style.color = connection.config.headerColor;
     }
 
-    // Attach to mount point
-    connection.attach(mount);
+    if (!skipAttach) {
+      // Attach to mount point
+      connection.attach(mount);
+    }
 
     // Remove from strip if present — may toggle strip visibility via CSS :empty,
     // changing the grid container's height after fit() already ran.
@@ -866,33 +869,90 @@
     if (!this._supersizeState) return;
 
     var saved = this._supersizeState;
+    var supersizedId = this._supersizeTerminalId;
     this._supersizeState = null;
     this._supersizeTerminalId = null;
 
     // Remove supersized class
     this._gridContainer.classList.remove('grid-container-supersized');
 
-    // Detach the supersized terminal from cell 0 and add to strip
+    // Check if the supersized terminal is still in cell 0 and was originally
+    // in a grid cell.  If so, we can avoid the destructive detach/reattach
+    // cycle by reparenting the live xterm DOM — this keeps the WebSocket
+    // connected and the terminal state intact (critical for TUI apps like
+    // Claude Code that don't recover well from a full reconnect).
     var cell0Info = this._cellMap.get(this._cells[0]);
-    if (cell0Info && cell0Info.connection) {
-      cell0Info.connection.detach();
-      this._addToStrip(cell0Info.terminalId, cell0Info.connection);
-      this._clearCell(this._cells[0]);
+    var supersizedConn = (cell0Info && cell0Info.terminalId === supersizedId)
+      ? cell0Info.connection : null;
+
+    // Find original cell index (-1 means terminal was in strip, not in grid)
+    var supersizedOrigIndex = -1;
+    if (supersizedConn) {
+      for (var i = 0; i < saved.assignments.length; i++) {
+        if (saved.assignments[i].terminalId === supersizedId) {
+          supersizedOrigIndex = saved.assignments[i].cellIndex;
+          break;
+        }
+      }
     }
 
-    // Restore grid — cell 0 is empty, new cells are added as needed
-    this.setGrid(saved.grid);
-
-    // Restore saved assignments from strip
     var self = this;
-    saved.assignments.forEach(function (entry) {
-      if (entry.cellIndex >= self._cells.length) return;
-      var stripEntry = self._stripItems.get(entry.terminalId);
-      if (!stripEntry) return; // terminal was closed
-      var conn = stripEntry.connection;
-      self._removeFromStrip(entry.terminalId);
-      self.assignTerminal(self._cells[entry.cellIndex], entry.terminalId, conn);
-    });
+
+    if (supersizedConn && supersizedOrigIndex >= 0) {
+      // --- Fast path: reparent the live terminal without detach/reattach ---
+
+      // Restore grid — cell 0 at (0,0) is always preserved by setGrid,
+      // so the supersized terminal survives the grid transition intact.
+      this.setGrid(saved.grid);
+
+      if (supersizedOrigIndex !== 0 && supersizedOrigIndex < this._cells.length) {
+        // Move xterm DOM from cell 0 to the terminal's original cell
+        var targetMount = this._cells[supersizedOrigIndex].querySelector('.cell-terminal');
+        supersizedConn.moveTo(targetMount);
+        this._clearCell(this._cells[0]);
+        this.assignTerminal(
+          this._cells[supersizedOrigIndex], supersizedId, supersizedConn,
+          { skipAttach: true }
+        );
+      } else {
+        // Terminal was originally in cell 0 — just rebuild the header
+        // (swaps the "Exit Supersize" button for the normal "Supersize" button)
+        this.assignTerminal(
+          this._cells[0], supersizedId, supersizedConn,
+          { skipAttach: true }
+        );
+      }
+
+      // Restore other terminals from strip to their original cells
+      saved.assignments.forEach(function (entry) {
+        if (entry.terminalId === supersizedId) return; // already handled
+        if (entry.cellIndex >= self._cells.length) return;
+        var stripEntry = self._stripItems.get(entry.terminalId);
+        if (!stripEntry) return;
+        var conn = stripEntry.connection;
+        self._removeFromStrip(entry.terminalId);
+        self.assignTerminal(self._cells[entry.cellIndex], entry.terminalId, conn);
+      });
+    } else {
+      // --- Slow path: terminal was supersized from the strip or is missing ---
+      // Fall back to the original detach/reattach logic.
+      if (cell0Info && cell0Info.connection) {
+        cell0Info.connection.detach();
+        this._addToStrip(cell0Info.terminalId, cell0Info.connection);
+        this._clearCell(this._cells[0]);
+      }
+
+      this.setGrid(saved.grid);
+
+      saved.assignments.forEach(function (entry) {
+        if (entry.cellIndex >= self._cells.length) return;
+        var stripEntry = self._stripItems.get(entry.terminalId);
+        if (!stripEntry) return;
+        var conn = stripEntry.connection;
+        self._removeFromStrip(entry.terminalId);
+        self.assignTerminal(self._cells[entry.cellIndex], entry.terminalId, conn);
+      });
+    }
 
     this.refitAll();
   };
