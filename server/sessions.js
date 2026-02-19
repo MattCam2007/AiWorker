@@ -56,11 +56,6 @@ class SessionManager {
 
     await execFileAsync('tmux', ['new-session', '-d', '-s', tmuxName, '-c', '/workspace', shell]);
 
-    // Disable alternate screen so xterm.js scroll works naturally
-    await execFileAsync('tmux', [
-      'set-option', '-t', tmuxName, 'terminal-overrides', 'xterm*:smcup@:rmcup@'
-    ]);
-
     this._sessions.set(id, {
       id,
       name: name || id,

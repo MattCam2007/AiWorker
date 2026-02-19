@@ -41,13 +41,16 @@ RUN mkdir -p /workspace && chown matt:matt /workspace
 # Switch to matt for Claude CLI install and runtime
 USER matt
 
-# Install Claude Code CLI (native binary — no Node.js dependency)
+# Install Claude Code CLI
 RUN curl -fsSL https://claude.ai/install.sh | bash
-ENV PATH="/home/matt/.claude/local/bin:${PATH}"
+ENV PATH="/home/matt/.local/bin:${PATH}"
 ENV DISABLE_AUTOUPDATER=1
 
 # Shell prompt and color configuration
 COPY --chown=matt:matt config/.bashrc /home/matt/.bashrc
+
+# tmux configuration (mouse scroll, history)
+COPY --chown=matt:matt config/tmux.conf /home/matt/.tmux.conf
 
 # Expose port
 EXPOSE 3000

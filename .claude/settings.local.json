@@ -28,7 +28,10 @@
       "Bash(git -C /workspace/AiWorker log --oneline -5)",
       "Bash(git -C /workspace/AiWorker add:*)",
       "Bash(git -C:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(claude --version:*)",
+      "Bash(python3:*)",
+      "Bash(claude mcp add --scope user context7 -- npx -y @upstash/context7-mcp)"
     ]
   }
 }

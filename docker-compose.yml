@@ -8,6 +8,8 @@ services:
       - ./config:/app/config
       - /home/matt/Projects:/workspace
       - /home/matt/.ssh:/home/matt/.ssh:ro
+      - /home/matt/.claude:/home/matt/.claude
+      - /home/matt/.claude.json:/home/matt/.claude.json
       - ${SSH_AUTH_SOCK:-/dev/null}:/ssh-agent
     environment:
       - TERMINALDECK_PORT=3000
