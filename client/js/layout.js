@@ -99,6 +99,18 @@
       header.style.display = 'none';
       cell.appendChild(header);
 
+      var addBtn = document.createElement('button');
+      addBtn.className = 'cell-add-btn';
+      addBtn.textContent = '+';
+      addBtn.title = 'Create terminal';
+      (function (cellEl) {
+        addBtn.addEventListener('click', function (e) {
+          e.stopPropagation();
+          if (self._onCreateTerminal) self._onCreateTerminal(cellEl);
+        });
+      })(cell);
+      cell.appendChild(addBtn);
+
       var mount = document.createElement('div');
       mount.className = 'cell-terminal';
       cell.appendChild(mount);

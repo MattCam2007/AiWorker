@@ -540,6 +540,34 @@ body::after {
   background: rgba(255, 255, 255, 0.02);
 }
 
+.cell-add-btn {
+  display: none;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 1;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: 1px solid var(--td-border);
+  background: transparent;
+  color: var(--td-text-dim);
+  font-size: 24px;
+  cursor: pointer;
+  transition: border-color 0.2s ease, color 0.2s ease, background 0.2s ease;
+}
+
+.cell-empty .cell-add-btn {
+  display: block;
+}
+
+.cell-add-btn:hover {
+  border-color: var(--td-cyan);
+  color: var(--td-cyan);
+  background: rgba(255, 255, 255, 0.04);
+}
+
 /* === Cell Header === */
 .cell-header {
   height: 24px;

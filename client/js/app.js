@@ -64,6 +64,11 @@
     this._engine._onLayoutChange = function () {
       self._syncTerminalList();
     };
+    this._engine._onCreateTerminal = function (cell) {
+      self._pendingCell = cell;
+      var dialog = document.getElementById('ephemeral-dialog');
+      if (dialog) dialog.classList.remove('hidden');
+    };
     this._engine.setGrid('2x2');
   };
 
@@ -216,6 +221,18 @@
   App.prototype._assignToFirstEmptyCell = function (id, conn) {
     if (!this._engine) return;
 
+    // If a specific cell was requested (from cell '+' button), use it
+    if (this._pendingCell) {
+      var pendingInfo = this._engine._cellMap.get(this._pendingCell);
+      if (pendingInfo && !pendingInfo.connection) {
+        var cell = this._pendingCell;
+        this._pendingCell = null;
+        this._engine.assignTerminal(cell, id, conn);
+        return;
+      }
+      this._pendingCell = null;
+    }
+
     // Try to find an empty grid cell
     for (var i = 0; i < this._engine._cells.length; i++) {
       var cell = this._engine._cells[i];
@@ -320,6 +337,7 @@
     if (cancelBtn) {
       cancelBtn.addEventListener('click', function () {
         dialog.classList.add('hidden');
+        self._pendingCell = null;
       });
     }
   };
