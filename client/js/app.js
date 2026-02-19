@@ -733,6 +733,19 @@
       }
     });
     this._fileTree.init();
+
+    var refreshBtn = document.getElementById('file-tree-refresh-btn');
+    if (refreshBtn) {
+      refreshBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        refreshBtn.classList.add('ft-refreshing');
+        self._fileTree.refresh().then(function () {
+          refreshBtn.classList.remove('ft-refreshing');
+        }).catch(function () {
+          refreshBtn.classList.remove('ft-refreshing');
+        });
+      });
+    }
   };
 
   App.prototype._isMobile = function () {

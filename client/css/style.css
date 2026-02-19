@@ -213,6 +213,40 @@ body {
   letter-spacing: 0.5px;
 }
 
+.section-header-spacer {
+  flex: 1;
+}
+
+.ft-refresh-btn {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--td-text-dim);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+}
+
+.ft-refresh-btn:hover {
+  color: var(--td-cyan);
+  border-color: var(--td-border);
+}
+
+.ft-refresh-btn.ft-refreshing {
+  animation: ft-spin 0.6s linear;
+  pointer-events: none;
+}
+
+@keyframes ft-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 .section-content {
   overflow-y: auto;
   overflow-x: hidden;
