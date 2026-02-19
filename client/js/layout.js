@@ -845,11 +845,10 @@
     // Add supersized class
     this._gridContainer.classList.add('grid-container-supersized');
 
-    // If target is already in cell 0, just refit
+    // If target is already in cell 0, rebuild header to show "Exit Supersize"
     var cell0Info = this._cellMap.get(this._cells[0]);
     if (cell0Info && cell0Info.terminalId === terminalId) {
-      targetConn.refit();
-      targetConn.focus();
+      this.assignTerminal(this._cells[0], terminalId, targetConn, { skipAttach: true });
       return;
     }
 
