@@ -1,3 +1,4 @@
+const { execFile } = require('child_process');
 const { WebSocketServer } = require('ws');
 const { ActivityTracker } = require('./activity');
 const log = require('./log');
@@ -19,8 +20,8 @@ class TerminalWSServer {
     this._controlClients = new Set();
     this._heartbeatInterval = null;
 
-    this._terminalWss = new WebSocketServer({ noServer: true });
-    this._controlWss = new WebSocketServer({ noServer: true });
+    this._terminalWss = new WebSocketServer({ noServer: true, maxPayload: 1 * 1024 * 1024 });
+    this._controlWss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
 
     httpServer.on('upgrade', (req, socket, head) => {
       const pathname = new URL(req.url, `http://${req.headers.host}`).pathname;
@@ -67,7 +68,7 @@ class TerminalWSServer {
       for (const [termId, terminal] of this._terminals) {
         for (const ws of terminal.clients) {
           if (ws._pendingPing && (now - ws._pendingPing > HEARTBEAT_TIMEOUT)) {
-            log.warn(`[ws] heartbeat timeout, killing stale connection for ${short(termId)}`);
+            log.debug(`[ws] heartbeat timeout, killing stale connection for ${short(termId)}`);
             ws.terminate();
             continue;
           }
@@ -162,7 +163,7 @@ class TerminalWSServer {
     if (terminal) {
       // Reconnecting to existing PTY — cancel any pending disconnect timer
       if (terminal.disconnectTimer) {
-        log.log(`[ws] client reconnected to ${short(terminalId)} within grace period`);
+        log.debug(`[ws] client reconnected to ${short(terminalId)} within grace period`);
         clearTimeout(terminal.disconnectTimer);
         terminal.disconnectTimer = null;
       }
@@ -189,7 +190,7 @@ class TerminalWSServer {
         return;
       }
 
-      log.log(`[pty] attached to ${short(terminalId)} (pid ${pty.pid})`);
+      log.debug(`[pty] attached to ${short(terminalId)} (pid ${pty.pid})`);
       terminal = { pty, clients: new Set(), disconnectTimer: null, exited: false };
       this._terminals.set(terminalId, terminal);
 
@@ -216,7 +217,7 @@ class TerminalWSServer {
           if (err) {
             log.warn(`[tmux] could not query panes for ${short(terminalId)}: ${err.message}`);
           } else {
-            log.log(`[tmux] pane state for ${short(terminalId)}: ${stdout.trim()}`);
+            log.debug(`[tmux] pane state for ${short(terminalId)}: ${stdout.trim()}`);
           }
         });
 
@@ -226,7 +227,7 @@ class TerminalWSServer {
             log.error(`[tmux] session ${short(terminalId)} is GONE — tmux killed the session`);
             this._sessionManager._dumpDiagnostics().catch(() => {});
           } else {
-            log.log(`[tmux] session ${short(terminalId)} still alive (attach process exited)`);
+            log.debug(`[tmux] session ${short(terminalId)} still alive (attach process exited)`);
           }
         }).catch(() => {});
 
@@ -287,10 +288,10 @@ class TerminalWSServer {
     ws.on('close', () => {
       terminal.clients.delete(ws);
       if (terminal.clients.size === 0 && !terminal.exited) {
-        log.log(`[ws] last client left ${short(terminalId)}, grace period ${PTY_GRACE_PERIOD / 1000}s`);
+        log.debug(`[ws] last client left ${short(terminalId)}, grace period ${PTY_GRACE_PERIOD / 1000}s`);
         // Don't kill immediately — allow reconnection within grace period
         terminal.disconnectTimer = setTimeout(() => {
-          log.warn(`[pty] grace period expired, killing ${short(terminalId)}`);
+          log.debug(`[pty] grace period expired, killing ${short(terminalId)}`);
           try { pty.kill(); } catch {}
           this._terminals.delete(terminalId);
         }, PTY_GRACE_PERIOD);

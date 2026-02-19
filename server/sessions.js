@@ -1,4 +1,5 @@
 const { execFile } = require('child_process');
+const { EventEmitter } = require('events');
 const util = require('util');
 const { randomUUID } = require('crypto');
 const os = require('os');
@@ -11,12 +12,24 @@ const SESSION_PREFIX = 'terminaldeck-';
 const TMUX_SOCKET = 'terminaldeck'; // Dedicated socket to isolate from processes inside terminals
 const HEALTH_CHECK_INTERVAL = 10000; // 10s
 
-class SessionManager {
+function isValidColor(val) {
+  return val === null || /^#[0-9a-fA-F]{6}$/.test(val);
+}
+
+function isValidCommand(cmd) {
+  // Allow absolute executable paths: /bin/bash, /usr/bin/zsh, etc.
+  if (/^\/[a-zA-Z0-9/_.-]+$/.test(cmd)) return true;
+  // Allow "editor /path" patterns for file opening
+  if (/^(vi|vim|nvim|nano|emacs|code)\s+\/[a-zA-Z0-9/_. '-]+$/.test(cmd)) return true;
+  return false;
+}
+
+class SessionManager extends EventEmitter {
   constructor(config) {
+    super();
     this._config = config;
     this._sessions = new Map(); // id -> { id, name, command, workingDir }
     this._healthInterval = null;
-    this._onSessionDied = null; // callback(id, name, diag)
     this._serverDownLogged = false;
     this._serverStarted = false;
   }
@@ -26,11 +39,14 @@ class SessionManager {
     if (this._serverStarted) return;
     this._serverStarted = true;
     try {
-      await execFileAsync('tmux', ['-L', TMUX_SOCKET, '-vvv', 'start-server']);
-      log.log(`[tmux] server started on socket "${TMUX_SOCKET}" with verbose logging`);
+      const args = ['-L', TMUX_SOCKET];
+      if (process.env.DEBUG === '1' || process.env.DEBUG === 'true') args.push('-vvv');
+      args.push('start-server');
+      await execFileAsync('tmux', args);
+      log.debug(`[tmux] server started on socket "${TMUX_SOCKET}"`);
     } catch (err) {
       // Server may already be running — not an error
-      log.log(`[tmux] start-server: ${err.message}`);
+      log.debug(`[tmux] start-server: ${err.message}`);
     }
   }
 
@@ -46,6 +62,11 @@ class SessionManager {
       return false;
     }
   }
+
+  // Public wrappers for cross-module access
+  tmuxSessionName(id) { return this._tmuxSessionName(id); }
+  async tmuxSessionExists(id) { return this._tmuxSessionExists(id); }
+  async dumpDiagnostics() { return this._dumpDiagnostics(); }
 
   async discoverSessions() {
     let tmuxSessions;
@@ -73,8 +94,17 @@ class SessionManager {
   }
 
   async createTerminal(name, command, headerBg, headerColor) {
+    if (name && (typeof name !== 'string' || name.length > 100)) {
+      throw new Error('Terminal name must be a string of 100 characters or fewer');
+    }
+
     const id = randomUUID();
     const shell = command || this._config.settings.shell || '/bin/bash';
+    if (!isValidCommand(shell)) {
+      throw new Error(`Invalid command: ${shell}`);
+    }
+    const validBg = isValidColor(headerBg) ? headerBg : null;
+    const validColor = isValidColor(headerColor) ? headerColor : null;
     const tmuxName = this._tmuxSessionName(id);
 
     log.log(`[tmux] creating session ${tmuxName.slice(-8)} cmd="${shell}"`);
@@ -93,7 +123,7 @@ class SessionManager {
       log.error(`[tmux] failed to set remain-on-exit on ${tmuxName.slice(-8)}: ${err.message}`);
     }
 
-    // Verify the session and server survived creation
+    // Verify the session survived creation
     try {
       const { stdout } = await execFileAsync('tmux', ['-L', TMUX_SOCKET, 'list-sessions', '-F', '#{session_name}']);
       const sessions = stdout.trim().split('\n').filter(Boolean);
@@ -103,39 +133,14 @@ class SessionManager {
     } catch (err) {
       log.error(`[tmux] server DEAD immediately after creating session: ${err.message}`);
     }
-    try {
-      const { stdout } = await execFileAsync('pgrep', ['-a', 'tmux']);
-      log.log(`[tmux] server processes: ${stdout.trim().replace(/\n/g, ', ')}`);
-    } catch {}
-
-    // Verify critical tmux options are actually loaded
-    try {
-      // Session/server options
-      for (const opt of ['exit-empty', 'destroy-unattached']) {
-        try {
-          const { stdout } = await execFileAsync('tmux', ['-L', TMUX_SOCKET, 'show-options', '-g', opt]);
-          log.log(`[tmux] option: ${stdout.trim()}`);
-        } catch {}
-      }
-      // Window options (remain-on-exit is a WINDOW option)
-      try {
-        const { stdout } = await execFileAsync('tmux', ['-L', TMUX_SOCKET, 'show-window-options', '-g', 'remain-on-exit']);
-        log.log(`[tmux] window-option(global): ${stdout.trim()}`);
-      } catch {}
-      // Per-session window option (the explicit set we just did)
-      try {
-        const { stdout } = await execFileAsync('tmux', ['-L', TMUX_SOCKET, 'show-window-options', '-t', `${tmuxName}:`, 'remain-on-exit']);
-        log.log(`[tmux] window-option(${tmuxName.slice(-8)}): ${stdout.trim()}`);
-      } catch {}
-    } catch {}
 
     this._sessions.set(id, {
       id,
       name: name || id,
       command: shell,
       workingDir: '/workspace',
-      headerBg: headerBg || null,
-      headerColor: headerColor || null
+      headerBg: validBg,
+      headerColor: validColor
     });
 
     return { id, name: name || id };
@@ -170,16 +175,23 @@ class SessionManager {
   updateSession(id, updates) {
     const session = this._sessions.get(id);
     if (!session) return false;
-    if (updates.name !== undefined) session.name = updates.name;
-    if (updates.headerBg !== undefined) session.headerBg = updates.headerBg;
-    if (updates.headerColor !== undefined) session.headerColor = updates.headerColor;
+    if (updates.name !== undefined) {
+      if (typeof updates.name !== 'string' || updates.name.length > 100) {
+        throw new Error('Terminal name must be a string of 100 characters or fewer');
+      }
+      session.name = updates.name;
+    }
+    if (updates.headerBg !== undefined) {
+      session.headerBg = isValidColor(updates.headerBg) ? updates.headerBg : null;
+    }
+    if (updates.headerColor !== undefined) {
+      session.headerColor = isValidColor(updates.headerColor) ? updates.headerColor : null;
+    }
     return true;
   }
 
   async destroySession(id) {
     const tmuxName = this._tmuxSessionName(id);
-    const stack = new Error().stack;
-    log.warn(`[tmux] destroySession called for ${id.slice(0, 8)} — stack:\n${stack}`);
     try {
       await execFileAsync('tmux', ['-L', TMUX_SOCKET, 'kill-session', '-t', tmuxName]);
     } catch {}
@@ -225,7 +237,7 @@ class SessionManager {
         log.error(`[tmux] session vanished: ${session.name} (${id.slice(0, 8)})`);
         await this._dumpDiagnostics();
         this._sessions.delete(id); // Remove so we don't log repeatedly
-        if (this._onSessionDied) this._onSessionDied(id, session.name);
+        this.emit('sessionDied', id, session.name);
       }
     }
   }
@@ -255,27 +267,6 @@ class SessionManager {
       log.error(`[diag] tmux list-sessions failed: ${e.message}`);
     }
 
-    // Also check default socket for comparison
-    try {
-      const { stdout } = await execFileAsync('tmux', ['list-sessions']);
-      log.error(`[diag] sessions on DEFAULT socket:\n  ${stdout.trim().replace(/\n/g, '\n  ')}`);
-    } catch {}
-
-    // Check key tmux options (session/server level)
-    for (const opt of ['destroy-unattached', 'exit-unattached', 'exit-empty']) {
-      try {
-        const { stdout } = await execFileAsync('tmux', ['-L', TMUX_SOCKET, 'show-options', '-g', opt]);
-        log.error(`[diag] tmux ${stdout.trim()}`);
-      } catch {}
-    }
-    // Check remain-on-exit at window level (it's a window option, not session)
-    try {
-      const { stdout } = await execFileAsync('tmux', ['-L', TMUX_SOCKET, 'show-window-options', '-g', 'remain-on-exit']);
-      log.error(`[diag] tmux window-opt: ${stdout.trim()}`);
-    } catch (e) {
-      log.error(`[diag] tmux remain-on-exit NOT SET as window option`);
-    }
-
     // Check if any tmux processes are alive at all
     try {
       const { stdout } = await execFileAsync('pgrep', ['-a', 'tmux']);
@@ -284,53 +275,35 @@ class SessionManager {
       log.error('[diag] NO tmux processes found (server is completely dead)');
     }
 
-    // Dump tmux lifecycle event hooks log
-    try {
-      const { stdout } = await execFileAsync('cat', ['/tmp/tmux-events.log'], { timeout: 2000 });
-      if (stdout.trim()) {
-        log.error(`[diag] tmux lifecycle events:\n${stdout.trim()}`);
-      }
-    } catch {}
-
-    // Search tmux server verbose log for the session destruction trigger
-    // With -L terminaldeck, the log file may be in /tmp/tmux-1000/
-    try {
-      const { stdout: files } = await execFileAsync('bash', ['-c',
-        'ls -t /app/tmux-server-*.log /home/*/tmux-server-*.log /tmp/tmux-server-*.log /tmp/tmux-*/tmux-server-*.log 2>/dev/null | head -1'
-      ], { timeout: 2000 });
-      const logFile = files.trim();
-      if (logFile) {
-        // Get 50 lines BEFORE session_destroy to see what triggered it
-        try {
-          const { stdout: events } = await execFileAsync('grep', [
-            '-B', '50', '-m', '1',
-            'session_destroy',
-            logFile
-          ], { timeout: 30000, maxBuffer: 1024 * 1024 });
-          log.error(`[diag] tmux: 50 lines before session_destroy:\n${events}`);
-        } catch {
-          log.error(`[diag] no session_destroy found in tmux server log`);
+    // Heavy diagnostics only in debug mode
+    if (process.env.DEBUG === '1' || process.env.DEBUG === 'true') {
+      // Dump tmux lifecycle event hooks log
+      try {
+        const { stdout } = await execFileAsync('cat', ['/tmp/tmux-events.log'], { timeout: 2000 });
+        if (stdout.trim()) {
+          log.debug(`[diag] tmux lifecycle events:\n${stdout.trim()}`);
         }
-        // Also check for any kill-session or kill-server commands
-        try {
-          const { stdout: kills } = await execFileAsync('grep', ['-E',
-            'kill-session|kill-server|kill-pane|kill-window',
-            logFile
-          ], { timeout: 10000 });
-          if (kills.trim()) {
-            log.error(`[diag] tmux kill commands found:\n${kills.trim()}`);
+      } catch {}
+
+      // Search tmux server verbose log for the session destruction trigger
+      try {
+        const { stdout: files } = await execFileAsync('bash', ['-c',
+          'ls -t /app/tmux-server-*.log /home/*/tmux-server-*.log /tmp/tmux-server-*.log /tmp/tmux-*/tmux-server-*.log 2>/dev/null | head -1'
+        ], { timeout: 2000 });
+        const logFile = files.trim();
+        if (logFile) {
+          try {
+            const { stdout: events } = await execFileAsync('grep', [
+              '-B', '50', '-m', '1',
+              'session_destroy',
+              logFile
+            ], { timeout: 30000, maxBuffer: 1024 * 1024 });
+            log.debug(`[diag] tmux: 50 lines before session_destroy:\n${events}`);
+          } catch {
+            log.debug(`[diag] no session_destroy found in tmux server log`);
           }
-        } catch {}
-        // File size for reference
-        try {
-          const { stdout: size } = await execFileAsync('wc', ['-c', logFile]);
-          log.error(`[diag] tmux server log size: ${size.trim()}`);
-        } catch {}
-      } else {
-        log.error('[diag] no tmux server log file found');
-      }
-    } catch (e) {
-      log.error(`[diag] could not read tmux server log: ${e.message}`);
+        }
+      } catch {}
     }
   }
 
