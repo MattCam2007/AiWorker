@@ -5,12 +5,6 @@
 
   var RECONNECT_BASE = 1000;
   var RECONNECT_CAP = 30000;
-  var OUTPUT_TAIL_CHARS = 80;
-
-  // Strip ANSI escape sequences
-  function stripAnsi(str) {
-    return str.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').replace(/\x1b\][^\x07]*\x07/g, '');
-  }
 
   function TerminalConnection(id, config) {
     this.id = id;
@@ -19,7 +13,6 @@
     this._fitAddon = null;
     this._ws = null;
     this._element = null;
-    this._lastOutput = '';
     this._reconnectAttempts = 0;
     this._reconnectTimer = null;
     this._destroyed = false;
@@ -28,7 +21,7 @@
     this._mouseTrackingStripped = false;
 
     // Callback hooks (set by App)
-    this._onActivity = null;
+    this._toastTimer = null;
     this._onStatusChange = null;
   }
 
@@ -104,18 +97,7 @@
         }, 1500);
       }
 
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(sel).then(showToast).catch(function () {
-          // Clipboard API failed (HTTP, not focused, etc.) — execCommand fallback
-          var ta = document.createElement('textarea');
-          ta.value = sel;
-          ta.style.cssText = 'position:fixed;opacity:0;pointer-events:none;top:0;left:0';
-          document.body.appendChild(ta);
-          ta.select();
-          try { if (document.execCommand('copy')) showToast(); } catch (e) {}
-          document.body.removeChild(ta);
-        });
-      } else {
+      function copyFallback() {
         var ta = document.createElement('textarea');
         ta.value = sel;
         ta.style.cssText = 'position:fixed;opacity:0;pointer-events:none;top:0;left:0';
@@ -123,6 +105,12 @@
         ta.select();
         try { if (document.execCommand('copy')) showToast(); } catch (e) {}
         document.body.removeChild(ta);
+      }
+
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(sel).then(showToast).catch(copyFallback);
+      } else {
+        copyFallback();
       }
     });
 
@@ -208,10 +196,6 @@
             });
             self._terminal.write(data);
           }
-          // Track activity
-          var stripped = stripAnsi(msg.data);
-          self._lastOutput = (self._lastOutput + stripped).slice(-OUTPUT_TAIL_CHARS);
-          if (self._onActivity) self._onActivity(self.id);
           break;
         case 'exited':
           self._exited = true;
@@ -313,10 +297,6 @@
 
   TerminalConnection.prototype.isActive = function () {
     return this._ws !== null && this._ws.readyState === WebSocket.OPEN;
-  };
-
-  TerminalConnection.prototype.getLastOutput = function () {
-    return this._lastOutput;
   };
 
   TerminalConnection.prototype.destroy = function () {

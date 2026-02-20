@@ -37,8 +37,8 @@ class SessionManager extends EventEmitter {
     this._serverStarted = false;
   }
 
-  // Start tmux server with verbose logging on our dedicated socket
-  async _ensureVerboseServer() {
+  // Start tmux server on our dedicated socket (verbose logging when DEBUG=1)
+  async _ensureServer() {
     if (this._serverStarted) return;
     this._serverStarted = true;
     try {
@@ -67,7 +67,6 @@ class SessionManager extends EventEmitter {
   }
 
   // Public wrappers for cross-module access
-  tmuxSessionName(id) { return this._tmuxSessionName(id); }
   async tmuxSessionExists(id) { return this._tmuxSessionExists(id); }
   async dumpDiagnostics() { return this._dumpDiagnostics(); }
 
@@ -112,7 +111,7 @@ class SessionManager extends EventEmitter {
     const tmuxName = this._tmuxSessionName(id);
 
     log.log(`[tmux] creating session ${tmuxName.slice(-8)} cmd="${shell}"`);
-    await this._ensureVerboseServer();
+    await this._ensureServer();
     // Unset TMUX/TMUX_PANE so processes inside can't discover our tmux.
     // Combined with the dedicated socket (-L terminaldeck), processes inside
     // won't find our sessions even if they run `tmux list-sessions`.
@@ -253,34 +252,33 @@ class SessionManager extends EventEmitter {
     log.error(`[diag] node rss=${Math.round(mem.rss / 1048576)}MB heap=${Math.round(mem.heapUsed / 1048576)}/${Math.round(mem.heapTotal / 1048576)}MB`);
     log.error(`[diag] system mem free=${Math.round(freeMem / 1048576)}MB total=${Math.round(totalMem / 1048576)}MB (${Math.round(freeMem / totalMem * 100)}% free)`);
 
-    // Check for OOM kills in dmesg
-    try {
-      const { stdout } = await execFileAsync('dmesg', ['-T', '--level=err,crit,alert,emerg'], { timeout: DIAG_TIMEOUT_MS });
-      const oomLines = stdout.split('\n').filter(l => /oom|killed process|out of memory/i.test(l)).slice(-5);
-      if (oomLines.length) {
-        log.error('[diag] recent OOM/kill events:');
-        oomLines.forEach(l => log.error(`  ${l.trim()}`));
-      }
-    } catch {}
-
-    // List surviving tmux sessions on our dedicated socket
-    try {
-      const { stdout } = await execFileAsync('tmux', ['-L', TMUX_SOCKET, 'list-sessions']);
-      log.error(`[diag] surviving tmux sessions (socket=${TMUX_SOCKET}):\n  ${stdout.trim().replace(/\n/g, '\n  ')}`);
-    } catch (e) {
-      log.error(`[diag] tmux list-sessions failed: ${e.message}`);
-    }
-
-    // Check if any tmux processes are alive at all
-    try {
-      const { stdout } = await execFileAsync('pgrep', ['-a', 'tmux']);
-      log.error(`[diag] tmux processes: ${stdout.trim().replace(/\n/g, ', ')}`);
-    } catch {
-      log.error('[diag] NO tmux processes found (server is completely dead)');
-    }
-
-    // Heavy diagnostics only in debug mode
+    // Detailed diagnostics only in debug mode
     if (process.env.DEBUG === '1' || process.env.DEBUG === 'true') {
+      // Check for OOM kills in dmesg
+      try {
+        const { stdout } = await execFileAsync('dmesg', ['-T', '--level=err,crit,alert,emerg'], { timeout: DIAG_TIMEOUT_MS });
+        const oomLines = stdout.split('\n').filter(l => /oom|killed process|out of memory/i.test(l)).slice(-5);
+        if (oomLines.length) {
+          log.error('[diag] recent OOM/kill events:');
+          oomLines.forEach(l => log.error(`  ${l.trim()}`));
+        }
+      } catch {}
+
+      // List surviving tmux sessions on our dedicated socket
+      try {
+        const { stdout } = await execFileAsync('tmux', ['-L', TMUX_SOCKET, 'list-sessions']);
+        log.error(`[diag] surviving tmux sessions (socket=${TMUX_SOCKET}):\n  ${stdout.trim().replace(/\n/g, '\n  ')}`);
+      } catch (e) {
+        log.error(`[diag] tmux list-sessions failed: ${e.message}`);
+      }
+
+      // Check if any tmux processes are alive at all
+      try {
+        const { stdout } = await execFileAsync('pgrep', ['-a', 'tmux']);
+        log.error(`[diag] tmux processes: ${stdout.trim().replace(/\n/g, ', ')}`);
+      } catch {
+        log.error('[diag] NO tmux processes found (server is completely dead)');
+      }
       // Dump tmux lifecycle event hooks log
       try {
         const { stdout } = await execFileAsync('cat', ['/tmp/tmux-events.log'], { timeout: DIAG_TIMEOUT_MS });

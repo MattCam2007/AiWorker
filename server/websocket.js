@@ -1,4 +1,3 @@
-const { execFile } = require('child_process');
 const { WebSocketServer } = require('ws');
 const { ActivityTracker } = require('./activity');
 const log = require('./log');
@@ -261,6 +260,7 @@ class TerminalWSServer {
       setTimeout(() => {
         terminal.outputBuffer = '';
         this._terminals.delete(terminalId);
+        this._activity.removeTerminal(terminalId);
       }, 5000);
     });
   }
@@ -369,6 +369,7 @@ class TerminalWSServer {
           try { terminal.pty.kill(); } catch (err) { log.debug('[pty] kill failed:', err.message); }
           terminal.outputBuffer = '';
           this._terminals.delete(terminalId);
+          this._activity.removeTerminal(terminalId);
         }, PTY_GRACE_PERIOD);
       }
     });
@@ -380,10 +381,6 @@ class TerminalWSServer {
     this._activity.startBroadcasting((msg) => {
       this._sendToControl(msg);
     });
-  }
-
-  stopActivityBroadcasting() {
-    this._activity.stopBroadcasting();
   }
 
   // --- Cleanup ---

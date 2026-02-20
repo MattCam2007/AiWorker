@@ -290,19 +290,6 @@ describe('TerminalConnection', function () {
     }, 10);
   });
 
-  it('getLastOutput() returns last output with ANSI stripped', function (done) {
-    var tc = new window.TerminalDeck.TerminalConnection('t13', {});
-    var el = window.document.getElementById('mount');
-    tc.attach(el);
-
-    setTimeout(function () {
-      tc._ws._receive({ type: 'output', data: '\x1b[32mhello\x1b[0m world' });
-      expect(tc.getLastOutput()).to.equal('hello world');
-      tc.destroy();
-      done();
-    }, 10);
-  });
-
   it('WS close triggers reconnection with exponential backoff', function (done) {
     var tc = new window.TerminalDeck.TerminalConnection('t14', {});
     var el = window.document.getElementById('mount');

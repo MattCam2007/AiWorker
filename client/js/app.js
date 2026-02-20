@@ -422,6 +422,7 @@
 
     // Header background color
     var selectedBg = null;
+    var selectedColor = null;
     if (this._engine) {
       var bgLabel = document.createElement('label');
       bgLabel.className = 'edit-label';
@@ -434,7 +435,6 @@
       dialog.appendChild(bgSwatches);
 
       // Header text color
-      var selectedColor = null;
       var textLabel = document.createElement('label');
       textLabel.className = 'edit-label';
       textLabel.textContent = 'Header Text';

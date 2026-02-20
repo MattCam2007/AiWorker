@@ -354,10 +354,6 @@ body {
   background: rgba(255, 51, 51, 0.15);
 }
 
-.tl-item-highlight {
-  background: rgba(10, 189, 198, 0.1);
-}
-
 /* === Cell Highlight === */
 @keyframes cell-glow {
   0% { border-color: var(--td-cyan); box-shadow: 0 0 8px rgba(10, 189, 198, 0.4); }
@@ -464,14 +460,12 @@ body::after {
   white-space: nowrap;
 }
 
-#grid-presets,
-#named-layouts {
+#grid-presets {
   display: flex;
   gap: 4px;
 }
 
-.preset-btn,
-.layout-btn {
+.preset-btn {
   padding: 4px 10px;
   font-family: var(--td-font-terminal);
   font-size: 11px;
@@ -484,14 +478,12 @@ body::after {
   white-space: nowrap;
 }
 
-.preset-btn:hover,
-.layout-btn:hover {
+.preset-btn:hover {
   color: var(--td-text);
   border-color: var(--td-text-dim);
 }
 
-.preset-btn.active,
-.layout-btn.active {
+.preset-btn.active {
   color: var(--td-cyan);
   border-color: var(--td-cyan);
   background: rgba(10, 189, 198, 0.1);
@@ -967,56 +959,6 @@ body::after {
   color: var(--td-cyan);
 }
 
-/* === Fullscreen Overlay === */
-#fullscreen-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100vw;
-  height: 100vh;
-  height: 100dvh;
-  background: var(--td-bg);
-  z-index: 1000;
-  display: flex;
-  flex-direction: column;
-}
-
-#fullscreen-overlay.hidden {
-  display: none;
-}
-
-.fullscreen-close {
-  position: absolute;
-  top: 8px;
-  right: 12px;
-  width: 32px;
-  height: 32px;
-  padding: 0;
-  font-size: 18px;
-  color: var(--td-text-dim);
-  background: rgba(0, 0, 0, 0.5);
-  border: 1px solid var(--td-border);
-  border-radius: 4px;
-  cursor: pointer;
-  z-index: 1001;
-  transition: all 0.15s ease;
-}
-
-.fullscreen-close::after {
-  content: '\00D7';
-}
-
-.fullscreen-close:hover {
-  color: var(--td-text);
-  background: rgba(0, 0, 0, 0.8);
-  border-color: var(--td-text-dim);
-}
-
-.fullscreen-terminal {
-  flex: 1;
-  overflow: hidden;
-}
-
 /* === Ephemeral Dialog (Create Terminal) === */
 #ephemeral-backdrop {
   position: fixed;
@@ -1115,26 +1057,6 @@ body::after {
   color: var(--td-text);
 }
 
-/* Reuse edit-label, edit-name-input, edit-swatches, edit-btn-row styles from edit popover */
-#ephemeral-dialog .edit-name-input {
-  display: block;
-  width: 100%;
-  padding: 5px 8px;
-  margin-bottom: 8px;
-  font-family: var(--td-font-terminal);
-  font-size: 12px;
-  color: var(--td-text);
-  background: var(--td-bg);
-  border: 1px solid var(--td-border);
-  border-radius: 3px;
-  outline: none;
-  transition: border-color 0.15s ease;
-}
-
-#ephemeral-dialog .edit-name-input:focus {
-  border-color: var(--td-cyan);
-}
-
 #ephemeral-dialog .edit-name-input::placeholder {
   color: var(--td-text-dim);
 }
@@ -1156,6 +1078,19 @@ body::after {
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--td-text-dim);
+}
+
+/* === Empty State === */
+.empty-state {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-family: var(--td-font-terminal);
+  font-size: 13px;
+  color: var(--td-text-dim);
+  text-align: center;
+  pointer-events: none;
 }
 
 /* === Utility === */
@@ -1216,8 +1151,7 @@ body::after {
     height: 34px;
   }
 
-  #grid-presets,
-  #named-layouts {
+  #grid-presets {
     display: none;
   }
 
@@ -1329,15 +1263,6 @@ body::after {
     font-size: 14px;
   }
 
-  /* --- Fullscreen close: larger tap target --- */
-  .fullscreen-close {
-    width: 44px;
-    height: 44px;
-    font-size: 22px;
-    top: 8px;
-    right: 8px;
-  }
-
   /* --- Cell add button: already good at 48px --- */
 
   /* --- Popover items: taller for touch --- */
@@ -1375,33 +1300,3 @@ body::after {
   opacity: 1;
 }
 
-/* === Terminal Context Menu === */
-.td-context-menu {
-  position: fixed;
-  z-index: 9999;
-  background: var(--td-surface);
-  border: 1px solid var(--td-border);
-  border-radius: 4px;
-  padding: 4px 0;
-  min-width: 120px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
-  font-family: var(--td-font-ui);
-  font-size: 13px;
-}
-
-.td-context-item {
-  display: block;
-  width: 100%;
-  padding: 6px 14px;
-  background: none;
-  border: none;
-  color: var(--td-text);
-  text-align: left;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.td-context-item:hover {
-  background: var(--td-border);
-  color: var(--td-cyan);
-}

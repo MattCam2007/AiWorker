@@ -22,9 +22,8 @@
     this._cellMap = new Map(); // cell element -> { connection, terminalId }
     this._minimized = new Map(); // terminalId -> connection
     this._currentGrid = null;
-    this._fullscreenConnection = null;
-    this._fullscreenOrigCell = null;
     this._resizeObserver = null;
+    this._onCreateTerminal = null;
     this._onCloseTerminal = null;
     this._onMinimizeTerminal = null;
     this._onUpdateTerminal = null;
@@ -58,9 +57,7 @@
     var self = this;
     this._keydownHandler = function (e) {
       if (e.key === 'Escape') {
-        if (self._fullscreenConnection) {
-          self.exitFullscreen();
-        } else if (self._supersizeState) {
+        if (self._supersizeState) {
           self.exitSupersize();
         }
       }
@@ -213,57 +210,6 @@
     this.refitAll();
     this._updateGutters();
     if (this._onLayoutChange) this._onLayoutChange();
-  };
-
-  LayoutEngine.prototype.applyLayout = function (layoutConfig, connections) {
-    if (!layoutConfig) return;
-
-    // Detach all current terminals for a clean layout replacement
-    var self = this;
-    this._cells.forEach(function (cell) {
-      var info = self._cellMap.get(cell);
-      if (info && info.connection) {
-        info.connection.detach();
-        self._clearCell(cell);
-      }
-    });
-
-    this.setGrid(layoutConfig.grid);
-
-    // Assign terminals from layout cells array (rows of IDs)
-    var cellIndex = 0;
-    var assigned = new Set();
-
-    if (layoutConfig.cells) {
-      for (var r = 0; r < layoutConfig.cells.length; r++) {
-        var row = layoutConfig.cells[r];
-        for (var c = 0; c < row.length; c++) {
-          var termId = row[c];
-          if (cellIndex < this._cells.length && connections[termId]) {
-            this.assignTerminal(this._cells[cellIndex], termId, connections[termId]);
-            assigned.add(termId);
-          }
-          cellIndex++;
-        }
-      }
-    }
-
-    // Minimize unassigned terminals
-    Object.keys(connections).forEach(function (id) {
-      if (!assigned.has(id)) {
-        self._addToMinimized(id, connections[id]);
-      }
-    });
-
-    // Refit after layout settles — double-rAF ensures one full rendering
-    // cycle has completed before measuring container dimensions.
-    if (typeof requestAnimationFrame !== 'undefined') {
-      requestAnimationFrame(function () {
-        requestAnimationFrame(function () {
-          self.refitAll();
-        });
-      });
-    }
   };
 
   LayoutEngine.prototype.assignTerminal = function (cell, terminalId, connection, options) {
@@ -677,57 +623,6 @@
         }
       }
     });
-  };
-
-  // --- Fullscreen ---
-
-  LayoutEngine.prototype.enterFullscreen = function (terminalId, connection) {
-    var overlay = document.getElementById('fullscreen-overlay');
-    if (!overlay) return;
-
-    // Find which cell currently holds this terminal
-    var self = this;
-    this._cells.forEach(function (cell) {
-      var info = self._cellMap.get(cell);
-      if (info && info.terminalId === terminalId) {
-        self._fullscreenOrigCell = cell;
-      }
-    });
-
-    // Detach from cell
-    connection.detach();
-
-    // Show overlay
-    overlay.classList.remove('hidden');
-    this._fullscreenConnection = connection;
-
-    // Attach to fullscreen container
-    var container = overlay.querySelector('.fullscreen-terminal');
-    connection.attach(container);
-    connection.refit();
-  };
-
-  LayoutEngine.prototype.exitFullscreen = function () {
-    var overlay = document.getElementById('fullscreen-overlay');
-    if (!overlay || !this._fullscreenConnection) return;
-
-    var conn = this._fullscreenConnection;
-    conn.detach();
-
-    overlay.classList.add('hidden');
-
-    // Re-attach to original cell
-    if (this._fullscreenOrigCell) {
-      var info = this._cellMap.get(this._fullscreenOrigCell);
-      if (info) {
-        var mount = this._fullscreenOrigCell.querySelector('.cell-terminal');
-        conn.attach(mount);
-        conn.refit();
-      }
-    }
-
-    this._fullscreenConnection = null;
-    this._fullscreenOrigCell = null;
   };
 
   // --- Supersize ---

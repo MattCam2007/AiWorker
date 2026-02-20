@@ -93,17 +93,6 @@
     if (el) this._setActivity(el, active);
   };
 
-  TerminalList.prototype.highlight = function (id) {
-    var el = this._items.get(id);
-    if (el) el.classList.add('tl-item-highlight');
-  };
-
-  TerminalList.prototype.clearHighlight = function () {
-    this._items.forEach(function (el) {
-      el.classList.remove('tl-item-highlight');
-    });
-  };
-
   TerminalList.prototype._setLocation = function (el, location) {
     var loc = el.querySelector('.tl-location');
     if (loc) loc.textContent = location;

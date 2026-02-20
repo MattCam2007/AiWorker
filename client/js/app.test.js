@@ -34,10 +34,6 @@ describe('App', function () {
         '<div id="connection-status" class="status-indicator"></div>' +
         '</header>' +
         '<main id="grid-container"></main>' +
-        '<div id="fullscreen-overlay" class="hidden">' +
-        '<button class="fullscreen-close"></button>' +
-        '<div class="fullscreen-terminal"></div>' +
-        '</div>' +
         '<div id="sidebar-backdrop" class="sidebar-backdrop hidden"></div>' +
         '<div id="ephemeral-dialog" class="hidden"></div>' +
         '<div id="ephemeral-backdrop" class="hidden"></div>' +
@@ -81,13 +77,11 @@ describe('App', function () {
       this.id = id;
       this.config = config;
       this._ws = null;
-      this._onActivity = null;
       this._onStatusChange = null;
       this.attach = sinon.stub();
       this.detach = sinon.stub();
       this.refit = sinon.stub();
       this.isActive = sinon.stub().returns(false);
-      this.getLastOutput = sinon.stub().returns('');
       this.destroy = sinon.stub();
     };
 
@@ -109,7 +103,6 @@ describe('App', function () {
           this._cellMap.set(cell, { connection: null, terminalId: null });
         }
       });
-      this.applyLayout = sinon.stub();
       this.refitAll = sinon.stub();
       this.assignTerminal = sinon.stub().callsFake(function (cell, id, conn) {
         this._cellMap.set(cell, { connection: conn, terminalId: id });

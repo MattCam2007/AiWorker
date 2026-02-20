@@ -13,8 +13,7 @@ describe('LayoutEngine', function () {
       detach: sinon.stub(),
       refit: sinon.stub(),
       focus: sinon.stub(),
-      isActive: sinon.stub().returns(true),
-      getLastOutput: sinon.stub().returns('')
+      isActive: sinon.stub().returns(true)
     };
   }
 
@@ -22,10 +21,6 @@ describe('LayoutEngine', function () {
     dom = new JSDOM(
       '<!DOCTYPE html><html><body>' +
         '<div id="grid-container"></div>' +
-        '<div id="fullscreen-overlay" class="hidden">' +
-        '<button class="fullscreen-close"></button>' +
-        '<div class="fullscreen-terminal"></div>' +
-        '</div>' +
         '</body></html>',
       { url: 'http://localhost:3000' }
     );
@@ -119,49 +114,6 @@ describe('LayoutEngine', function () {
     });
   });
 
-  it('applyLayout() assigns terminals to cells from layout config', function () {
-    var grid = document.getElementById('grid-container');
-    var engine = new LayoutEngine(grid);
-
-    var connections = {
-      t1: makeConnection('t1', 'Terminal 1'),
-      t2: makeConnection('t2', 'Terminal 2')
-    };
-
-    var layout = {
-      grid: '2x1',
-      cells: [['t1', 't2']]
-    };
-
-    engine.applyLayout(layout, connections);
-
-    expect(connections.t1.attach.calledOnce).to.be.true;
-    expect(connections.t2.attach.calledOnce).to.be.true;
-  });
-
-  it('applyLayout() puts unassigned terminals in minimized map', function () {
-    var grid = document.getElementById('grid-container');
-    var engine = new LayoutEngine(grid);
-
-    var connections = {
-      t1: makeConnection('t1', 'Terminal 1'),
-      t2: makeConnection('t2', 'Terminal 2'),
-      t3: makeConnection('t3', 'Terminal 3')
-    };
-
-    var layout = {
-      grid: '1x1',
-      cells: [['t1']]
-    };
-
-    engine.applyLayout(layout, connections);
-
-    // t2 and t3 should be minimized
-    expect(engine._minimized.size).to.equal(2);
-    expect(engine._minimized.has('t2')).to.be.true;
-    expect(engine._minimized.has('t3')).to.be.true;
-  });
-
   it('assignTerminal() calls connection.attach() on cell terminal mount', function () {
     var grid = document.getElementById('grid-container');
     var engine = new LayoutEngine(grid);
@@ -227,8 +179,13 @@ describe('LayoutEngine', function () {
       t4: makeConnection('t4', 'T4')
     };
 
-    // Start with 2x2 (4 cells)
-    engine.applyLayout({ grid: '2x2', cells: [['t1', 't2'], ['t3', 't4']] }, connections);
+    // Start with 2x2 (4 cells), assign terminals to each cell
+    engine.setGrid('2x2');
+    var cells = grid.querySelectorAll('.grid-cell');
+    engine.assignTerminal(cells[0], 't1', connections.t1);
+    engine.assignTerminal(cells[1], 't2', connections.t2);
+    engine.assignTerminal(cells[2], 't3', connections.t3);
+    engine.assignTerminal(cells[3], 't4', connections.t4);
 
     // Switch to 1x1 — only terminals that don't fit should be minimized
     engine.setGrid('1x1');
@@ -250,8 +207,13 @@ describe('LayoutEngine', function () {
       t4: makeConnection('t4', 'T4')
     };
 
-    // Start with 2x2
-    engine.applyLayout({ grid: '2x2', cells: [['t1', 't2'], ['t3', 't4']] }, connections);
+    // Start with 2x2, assign terminals to each cell
+    engine.setGrid('2x2');
+    var cells = grid.querySelectorAll('.grid-cell');
+    engine.assignTerminal(cells[0], 't1', connections.t1);
+    engine.assignTerminal(cells[1], 't2', connections.t2);
+    engine.assignTerminal(cells[2], 't3', connections.t3);
+    engine.assignTerminal(cells[3], 't4', connections.t4);
 
     // Switch to 3x2 — all 4 fit, no terminals should be minimized
     engine.setGrid('3x2');
@@ -281,8 +243,13 @@ describe('LayoutEngine', function () {
       t4: makeConnection('t4', 'T4')
     };
 
-    // Start with 2x2
-    engine.applyLayout({ grid: '2x2', cells: [['t1', 't2'], ['t3', 't4']] }, connections);
+    // Start with 2x2, assign terminals to each cell
+    engine.setGrid('2x2');
+    var cells = grid.querySelectorAll('.grid-cell');
+    engine.assignTerminal(cells[0], 't1', connections.t1);
+    engine.assignTerminal(cells[1], 't2', connections.t2);
+    engine.assignTerminal(cells[2], 't3', connections.t3);
+    engine.assignTerminal(cells[3], 't4', connections.t4);
 
     // Switch to 2x1 — only row 0 fits
     engine.setGrid('2x1');
@@ -311,80 +278,26 @@ describe('LayoutEngine', function () {
     expect(popover.querySelectorAll('.popover-item').length).to.equal(1);
   });
 
-  it('enterFullscreen() shows overlay and attaches terminal', function () {
-    var grid = document.getElementById('grid-container');
-    var engine = new LayoutEngine(grid);
-
-    engine.setGrid('1x1');
-    var cell = grid.querySelector('.grid-cell');
-    var conn = makeConnection('t1', 'Term 1');
-    engine.assignTerminal(cell, 't1', conn);
-
-    engine.enterFullscreen('t1', conn);
-
-    var overlay = document.getElementById('fullscreen-overlay');
-    expect(overlay.classList.contains('hidden')).to.be.false;
-    // attach called: once for assign, once for fullscreen
-    expect(conn.attach.callCount).to.equal(2);
-    expect(conn.detach.calledOnce).to.be.true;
-  });
-
-  it('exitFullscreen() hides overlay and re-attaches to original cell', function () {
-    var grid = document.getElementById('grid-container');
-    var engine = new LayoutEngine(grid);
-
-    engine.setGrid('1x1');
-    var cell = grid.querySelector('.grid-cell');
-    var conn = makeConnection('t1', 'Term 1');
-    engine.assignTerminal(cell, 't1', conn);
-
-    engine.enterFullscreen('t1', conn);
-    engine.exitFullscreen();
-
-    var overlay = document.getElementById('fullscreen-overlay');
-    expect(overlay.classList.contains('hidden')).to.be.true;
-    // attach: assign(1) + fullscreen(2) + re-attach(3)
-    expect(conn.attach.callCount).to.equal(3);
-  });
-
-  it('Escape key calls exitFullscreen()', function () {
-    var grid = document.getElementById('grid-container');
-    var engine = new LayoutEngine(grid);
-
-    engine.setGrid('1x1');
-    var cell = grid.querySelector('.grid-cell');
-    var conn = makeConnection('t1', 'Term 1');
-    engine.assignTerminal(cell, 't1', conn);
-
-    engine.enterFullscreen('t1', conn);
-
-    // Simulate Escape key
-    var event = new window.KeyboardEvent('keydown', { key: 'Escape' });
-    document.dispatchEvent(event);
-
-    var overlay = document.getElementById('fullscreen-overlay');
-    expect(overlay.classList.contains('hidden')).to.be.true;
-  });
-
   it('refitAll() calls refit() on all assigned connections', function () {
     var grid = document.getElementById('grid-container');
     var engine = new LayoutEngine(grid);
 
-    var connections = {
-      t1: makeConnection('t1', 'T1'),
-      t2: makeConnection('t2', 'T2')
-    };
+    var conn1 = makeConnection('t1', 'T1');
+    var conn2 = makeConnection('t2', 'T2');
 
-    engine.applyLayout({ grid: '2x1', cells: [['t1', 't2']] }, connections);
+    engine.setGrid('2x1');
+    var cells = grid.querySelectorAll('.grid-cell');
+    engine.assignTerminal(cells[0], 't1', conn1);
+    engine.assignTerminal(cells[1], 't2', conn2);
 
     // Reset refit call counts
-    connections.t1.refit.resetHistory();
-    connections.t2.refit.resetHistory();
+    conn1.refit.resetHistory();
+    conn2.refit.resetHistory();
 
     engine.refitAll();
 
-    expect(connections.t1.refit.calledOnce).to.be.true;
-    expect(connections.t2.refit.calledOnce).to.be.true;
+    expect(conn1.refit.calledOnce).to.be.true;
+    expect(conn2.refit.calledOnce).to.be.true;
   });
 
   it('mobile detection forces 1x1 grid', function () {
