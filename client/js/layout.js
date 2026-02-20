@@ -31,6 +31,9 @@
     this._onLayoutChange = null;
     this._supersizeState = null;
     this._supersizeTerminalId = null;
+    this._colProportions = null;
+    this._rowProportions = null;
+    this._gutters = [];
 
     this._initResizeObserver();
     this._initKeyboardListeners();
@@ -43,6 +46,7 @@
     if (typeof ResizeObserver !== 'undefined') {
       this._resizeObserver = new ResizeObserver(function () {
         self.refitAll();
+        self._positionGutters();
       });
       this._resizeObserver.observe(this._gridContainer);
     }
@@ -67,6 +71,7 @@
   LayoutEngine.prototype.destroy = function () {
     document.removeEventListener('keydown', this._keydownHandler);
     if (this._resizeObserver) this._resizeObserver.disconnect();
+    this._removeGutters();
   };
 
   // --- Cell Management ---
@@ -156,9 +161,12 @@
 
     this._currentGrid = spec;
 
-    // Update CSS grid template
-    this._gridContainer.style.gridTemplateColumns = 'repeat(' + newCols + ', 1fr)';
-    this._gridContainer.style.gridTemplateRows = 'repeat(' + newRows + ', 1fr)';
+    // Initialize equal column/row proportions and update CSS grid template
+    this._colProportions = [];
+    for (var p = 0; p < newCols; p++) this._colProportions.push(1);
+    this._rowProportions = [];
+    for (var p = 0; p < newRows; p++) this._rowProportions.push(1);
+    this._applyProportions();
 
     // Build new cells array, reusing old cells at matching (row, col) positions
     var newCells = [];
@@ -203,6 +211,7 @@
 
     // Refit all terminals to their new cell dimensions
     this.refitAll();
+    this._updateGutters();
     if (this._onLayoutChange) this._onLayoutChange();
   };
 
@@ -741,7 +750,9 @@
 
     this._supersizeState = {
       grid: this._currentGrid,
-      assignments: assignments
+      assignments: assignments,
+      colProportions: this._colProportions ? this._colProportions.slice() : null,
+      rowProportions: this._rowProportions ? this._rowProportions.slice() : null
     };
     this._supersizeTerminalId = terminalId;
 
@@ -876,6 +887,16 @@
     }
 
     this.refitAll();
+
+    // Restore resize proportions from before supersize
+    if (saved.colProportions && this._colProportions &&
+        saved.colProportions.length === this._colProportions.length) {
+      this._colProportions = saved.colProportions;
+      this._rowProportions = saved.rowProportions;
+      this._applyProportions();
+      this._updateGutters();
+      this.refitAll();
+    }
   };
 
   LayoutEngine.prototype.clearSupersize = function () {
@@ -904,6 +925,205 @@
       }
     }
     return false;
+  };
+
+  // --- Grid Resize Gutters ---
+
+  LayoutEngine.prototype._applyProportions = function () {
+    if (this._colProportions) {
+      this._gridContainer.style.gridTemplateColumns = this._colProportions
+        .map(function (p) { return p + 'fr'; }).join(' ');
+    }
+    if (this._rowProportions) {
+      this._gridContainer.style.gridTemplateRows = this._rowProportions
+        .map(function (p) { return p + 'fr'; }).join(' ');
+    }
+  };
+
+  LayoutEngine.prototype._updateGutters = function () {
+    this._removeGutters();
+
+    var cols = this._colProportions ? this._colProportions.length : 1;
+    var rows = this._rowProportions ? this._rowProportions.length : 1;
+    var self = this;
+
+    for (var i = 0; i < cols - 1; i++) {
+      (function (idx) {
+        var gutter = document.createElement('div');
+        gutter.className = 'grid-gutter grid-gutter-col';
+        gutter.dataset.index = idx;
+        gutter.addEventListener('mousedown', function (e) {
+          self._startGutterDrag(e, gutter, 'col');
+        });
+        gutter.addEventListener('touchstart', function (e) {
+          self._startGutterDrag(e, gutter, 'col');
+        }, { passive: false });
+        gutter.addEventListener('dblclick', function () {
+          self._resetProportions('col');
+        });
+        self._gridContainer.appendChild(gutter);
+        self._gutters.push(gutter);
+      })(i);
+    }
+
+    for (var j = 0; j < rows - 1; j++) {
+      (function (idx) {
+        var gutter = document.createElement('div');
+        gutter.className = 'grid-gutter grid-gutter-row';
+        gutter.dataset.index = idx;
+        gutter.addEventListener('mousedown', function (e) {
+          self._startGutterDrag(e, gutter, 'row');
+        });
+        gutter.addEventListener('touchstart', function (e) {
+          self._startGutterDrag(e, gutter, 'row');
+        }, { passive: false });
+        gutter.addEventListener('dblclick', function () {
+          self._resetProportions('row');
+        });
+        self._gridContainer.appendChild(gutter);
+        self._gutters.push(gutter);
+      })(j);
+    }
+
+    if (typeof requestAnimationFrame !== 'undefined') {
+      requestAnimationFrame(function () {
+        self._positionGutters();
+      });
+    }
+  };
+
+  LayoutEngine.prototype._removeGutters = function () {
+    this._gutters.forEach(function (g) { g.remove(); });
+    this._gutters = [];
+  };
+
+  LayoutEngine.prototype._positionGutters = function () {
+    if (!this._gutters.length || !this._cells.length) return;
+
+    var containerRect = this._gridContainer.getBoundingClientRect();
+    var cols = this._colProportions ? this._colProportions.length : 1;
+    var self = this;
+
+    this._gutters.forEach(function (gutter) {
+      var idx = parseInt(gutter.dataset.index, 10);
+
+      if (gutter.classList.contains('grid-gutter-col')) {
+        var leftCell = self._cells[idx];
+        var rightCell = self._cells[idx + 1];
+        if (leftCell && rightCell) {
+          var leftRect = leftCell.getBoundingClientRect();
+          var rightRect = rightCell.getBoundingClientRect();
+          var mid = ((leftRect.right + rightRect.left) / 2) - containerRect.left;
+          gutter.style.left = (mid - 5) + 'px';
+          gutter.style.top = '0';
+          gutter.style.height = containerRect.height + 'px';
+        }
+      } else {
+        var topCell = self._cells[idx * cols];
+        var bottomCell = self._cells[(idx + 1) * cols];
+        if (topCell && bottomCell) {
+          var topRect = topCell.getBoundingClientRect();
+          var bottomRect = bottomCell.getBoundingClientRect();
+          var mid = ((topRect.bottom + bottomRect.top) / 2) - containerRect.top;
+          gutter.style.top = (mid - 5) + 'px';
+          gutter.style.left = '0';
+          gutter.style.width = containerRect.width + 'px';
+        }
+      }
+    });
+  };
+
+  LayoutEngine.prototype._startGutterDrag = function (e, gutter, type) {
+    e.preventDefault();
+
+    var isTouch = e.type === 'touchstart';
+    var index = parseInt(gutter.dataset.index, 10);
+    var point = isTouch ? e.touches[0] : e;
+    var startPos = type === 'col' ? point.clientX : point.clientY;
+    var proportions = type === 'col' ? this._colProportions : this._rowProportions;
+    var startProportions = proportions.slice();
+    var totalFr = 0;
+    proportions.forEach(function (p) { totalFr += p; });
+
+    var containerRect = this._gridContainer.getBoundingClientRect();
+    var count = proportions.length;
+    var gap = 2;
+    var padding = 2;
+    var totalSize = type === 'col' ? containerRect.width : containerRect.height;
+    var availableSize = totalSize - padding * 2 - gap * (count - 1);
+    var pxPerFr = availableSize / totalFr;
+    var minFr = totalFr * 0.08;
+    var self = this;
+    var rafPending = false;
+
+    gutter.classList.add('grid-gutter-active');
+    document.body.style.cursor = type === 'col' ? 'col-resize' : 'row-resize';
+    document.body.style.userSelect = 'none';
+    document.body.style.webkitUserSelect = 'none';
+
+    function onMove(e) {
+      if (e.cancelable) e.preventDefault();
+      if (rafPending) return;
+      rafPending = true;
+
+      var pt = e.touches ? e.touches[0] : e;
+      var currentPos = type === 'col' ? pt.clientX : pt.clientY;
+      var deltaPx = currentPos - startPos;
+      var deltaFr = deltaPx / pxPerFr;
+
+      requestAnimationFrame(function () {
+        rafPending = false;
+
+        var newBefore = startProportions[index] + deltaFr;
+        var newAfter = startProportions[index + 1] - deltaFr;
+
+        if (newBefore < minFr) {
+          newAfter = startProportions[index] + startProportions[index + 1] - minFr;
+          newBefore = minFr;
+        }
+        if (newAfter < minFr) {
+          newBefore = startProportions[index] + startProportions[index + 1] - minFr;
+          newAfter = minFr;
+        }
+
+        proportions[index] = newBefore;
+        proportions[index + 1] = newAfter;
+
+        self._applyProportions();
+        self._positionGutters();
+        self.refitAll();
+      });
+    }
+
+    function onEnd() {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onEnd);
+      document.removeEventListener('touchmove', onMove);
+      document.removeEventListener('touchend', onEnd);
+      gutter.classList.remove('grid-gutter-active');
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      document.body.style.webkitUserSelect = '';
+    }
+
+    if (isTouch) {
+      document.addEventListener('touchmove', onMove, { passive: false });
+      document.addEventListener('touchend', onEnd);
+    } else {
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onEnd);
+    }
+  };
+
+  LayoutEngine.prototype._resetProportions = function (type) {
+    var proportions = type === 'col' ? this._colProportions : this._rowProportions;
+    if (!proportions) return;
+    for (var i = 0; i < proportions.length; i++) {
+      proportions[i] = 1;
+    }
+    this._applyProportions();
+    this._positionGutters();
+    this.refitAll();
   };
 
   ns.LayoutEngine = LayoutEngine;

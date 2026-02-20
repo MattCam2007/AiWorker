@@ -551,6 +551,53 @@ body::after {
   gap: 2px;
   overflow: hidden;
   padding: 2px;
+  position: relative;
+}
+
+/* === Grid Resize Gutters === */
+.grid-gutter {
+  position: absolute;
+  z-index: 10;
+  background: transparent;
+}
+
+.grid-gutter-col {
+  width: 10px;
+  cursor: col-resize;
+}
+
+.grid-gutter-col::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+  margin-left: -1px;
+  background: transparent;
+  transition: background 0.15s ease;
+}
+
+.grid-gutter-row {
+  height: 10px;
+  cursor: row-resize;
+}
+
+.grid-gutter-row::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 2px;
+  margin-top: -1px;
+  background: transparent;
+  transition: background 0.15s ease;
+}
+
+.grid-gutter:hover::after,
+.grid-gutter-active::after {
+  background: var(--td-cyan);
 }
 
 /* === Grid Cells === */
@@ -1184,6 +1231,10 @@ body::after {
   #grid-container {
     grid-template-columns: 1fr !important;
     grid-template-rows: 1fr !important;
+  }
+
+  .grid-gutter {
+    display: none !important;
   }
 
   /* --- Cell header: keep readable, enlarge buttons for touch --- */
