@@ -1,18 +1,19 @@
-version: '3.8'
 services:
   terminaldeck:
     build: .
     init: true
     ports:
-      - "3000:3000"
+      - "${TERMINALDECK_PORT:-3000}:3000"
     volumes:
       - ./config:/app/config
-      - /home/matt/Projects:/workspace
-      - /home/matt/.ssh:/home/matt/.ssh:ro
-      - /home/matt/.claude:/home/matt/.claude
-      - /home/matt/.claude.json:/home/matt/.claude.json
+      - ${WORKSPACE_PATH:-./workspace}:/workspace
+      - ${SSH_KEYS_PATH:-/dev/null}:/home/terminaldeck/.ssh:ro
       - ${SSH_AUTH_SOCK:-/dev/null}:/ssh-agent
+      - ${CLAUDE_CONFIG_PATH:-/dev/null}:/home/terminaldeck/.claude
+      - ${CLAUDE_JSON_PATH:-/dev/null}:/home/terminaldeck/.claude.json
     environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
       - TERMINALDECK_PORT=3000
       - SSH_AUTH_SOCK=/ssh-agent
     restart: unless-stopped

@@ -5,3 +5,5 @@ test
 *.md
 .dockerignore
 docker-compose.yml
+.env
+.env.example
