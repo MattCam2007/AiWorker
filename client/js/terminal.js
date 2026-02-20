@@ -25,6 +25,7 @@
     this._destroyed = false;
     this._detaching = false;
     this._exited = false;
+    this._mouseTrackingStripped = false;
 
     // Callback hooks (set by App)
     this._onActivity = null;
@@ -80,8 +81,83 @@
     // Connect WebSocket
     this._connectWS();
 
+    // Copy-on-select: when xterm.js selection changes, copy to clipboard.
+    // xterm.js selection only works when mouse tracking is OFF (we strip
+    // the tracking escape sequences below so this always fires).
+    this._terminal.onSelectionChange(function () {
+      var sel = self._terminal && self._terminal.getSelection();
+      if (!sel) return;
+
+      function showToast() {
+        var toast = document.getElementById('td-copy-toast');
+        if (!toast) {
+          toast = document.createElement('div');
+          toast.id = 'td-copy-toast';
+          toast.className = 'td-copy-toast';
+          document.body.appendChild(toast);
+        }
+        toast.textContent = 'Copied!';
+        toast.classList.add('td-copy-toast-show');
+        clearTimeout(self._toastTimer);
+        self._toastTimer = setTimeout(function () {
+          toast.classList.remove('td-copy-toast-show');
+        }, 1500);
+      }
+
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(sel).then(showToast).catch(function () {
+          // Clipboard API failed (HTTP, not focused, etc.) — execCommand fallback
+          var ta = document.createElement('textarea');
+          ta.value = sel;
+          ta.style.cssText = 'position:fixed;opacity:0;pointer-events:none;top:0;left:0';
+          document.body.appendChild(ta);
+          ta.select();
+          try { if (document.execCommand('copy')) showToast(); } catch (e) {}
+          document.body.removeChild(ta);
+        });
+      } else {
+        var ta = document.createElement('textarea');
+        ta.value = sel;
+        ta.style.cssText = 'position:fixed;opacity:0;pointer-events:none;top:0;left:0';
+        document.body.appendChild(ta);
+        ta.select();
+        try { if (document.execCommand('copy')) showToast(); } catch (e) {}
+        document.body.removeChild(ta);
+      }
+    });
+
+    // Forward mouse wheel to PTY so tmux scroll works even though we strip
+    // mouse-tracking escape sequences (which would disable xterm.js selection).
+    // We encode scroll events in SGR format (\033[<btn;col;rowM).
+    el.addEventListener('wheel', function (e) {
+      if (!self._ws || self._ws.readyState !== WebSocket.OPEN) return;
+      if (!self._terminal) return;
+
+      // Only forward if we actually stripped mouse tracking (i.e. tmux wanted it)
+      if (!self._mouseTrackingStripped) return;
+
+      e.preventDefault();
+      var btn = e.deltaY < 0 ? 64 : 65; // 64=scroll-up, 65=scroll-down
+      var rect = el.getBoundingClientRect();
+      var renderer = self._terminal._core._renderService;
+      var cellW = renderer.dimensions.css.cell.width || 9;
+      var cellH = renderer.dimensions.css.cell.height || 17;
+      var col = Math.floor((e.clientX - rect.left) / cellW) + 1;
+      var row = Math.floor((e.clientY - rect.top) / cellH) + 1;
+      col = Math.max(1, Math.min(col, self._terminal.cols));
+      row = Math.max(1, Math.min(row, self._terminal.rows));
+
+      // Send 3 scroll lines per wheel tick (matches typical terminal behaviour)
+      var lines = 3;
+      for (var i = 0; i < lines; i++) {
+        self._ws.send(JSON.stringify({
+          type: 'input',
+          data: '\x1b[<' + btn + ';' + col + ';' + row + 'M'
+        }));
+      }
+    }, { passive: false });
+
     // Wire terminal input to WS
-    var self = this;
     this._terminal.onData(function (data) {
       if (self._ws && self._ws.readyState === WebSocket.OPEN) {
         self._ws.send(JSON.stringify({ type: 'input', data: data }));
@@ -122,7 +198,15 @@
       switch (msg.type) {
         case 'output':
           if (self._terminal) {
-            self._terminal.write(msg.data);
+            // Strip mouse-tracking escape sequences so xterm.js never enters
+            // mouse tracking mode.  This keeps the selection service enabled
+            // (drag-to-select works).  Wheel events are forwarded manually
+            // by our own handler so tmux scroll still works.
+            var data = msg.data.replace(/\x1b\[\?100[0-6][hl]/g, function (m) {
+              if (m.charAt(m.length - 1) === 'h') self._mouseTrackingStripped = true;
+              return '';
+            });
+            self._terminal.write(data);
           }
           // Track activity
           var stripped = stripAnsi(msg.data);

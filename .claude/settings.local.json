@@ -36,7 +36,9 @@
       "Bash(find:*)",
       "Bash(env:*)",
       "Bash(xargs cat:*)",
-      "Bash(wc:*)"
+      "Bash(wc:*)",
+      "Bash(git log:*)",
+      "Bash(docker ps:*)"
     ]
   }
 }

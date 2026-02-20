@@ -1352,3 +1352,56 @@ body::after {
     min-height: 40px;
   }
 }
+
+/* === Copy Toast === */
+.td-copy-toast {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  background: var(--td-cyan);
+  color: #000;
+  padding: 6px 14px;
+  border-radius: 4px;
+  font-family: var(--td-font-ui);
+  font-size: 13px;
+  font-weight: 600;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+  z-index: 9999;
+}
+
+.td-copy-toast-show {
+  opacity: 1;
+}
+
+/* === Terminal Context Menu === */
+.td-context-menu {
+  position: fixed;
+  z-index: 9999;
+  background: var(--td-surface);
+  border: 1px solid var(--td-border);
+  border-radius: 4px;
+  padding: 4px 0;
+  min-width: 120px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+  font-family: var(--td-font-ui);
+  font-size: 13px;
+}
+
+.td-context-item {
+  display: block;
+  width: 100%;
+  padding: 6px 14px;
+  background: none;
+  border: none;
+  color: var(--td-text);
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.td-context-item:hover {
+  background: var(--td-border);
+  color: var(--td-cyan);
+}
