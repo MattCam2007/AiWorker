@@ -5,6 +5,7 @@ const log = require('./log');
 const MAX_TERM_COLS = 500;
 const MAX_TERM_ROWS = 200;
 
+const PTY_GRACE_PERIOD = 30000; // 30s before killing orphaned PTY
 const HEARTBEAT_INTERVAL = 15000; // 15s ping interval
 const HEARTBEAT_TIMEOUT = 10000; // 10s to receive pong
 const MAX_REATTACH = 5; // max PTY re-attach attempts before giving up
@@ -17,9 +18,8 @@ class TerminalWSServer {
   constructor(httpServer, sessionManager, options = {}) {
     this._sessionManager = sessionManager;
     this._serverToken = options.serverToken || null;
-    // wsId -> { ws, pty, terminalId, exited, reattachCount }
-    this._connections = new Map();
-    this._nextWsId = 0;
+    // terminalId -> { pty, clients: Set<ws>, disconnectTimer, exited }
+    this._terminals = new Map();
     this._activity = new ActivityTracker();
 
     // Control channel clients
@@ -89,15 +89,16 @@ class TerminalWSServer {
       }
 
       // Ping terminal clients
-      for (const [wsId, conn] of this._connections) {
-        const ws = conn.ws;
-        if (ws._pendingPing && (now - ws._pendingPing > HEARTBEAT_TIMEOUT)) {
-          log.debug(`[ws] heartbeat timeout, killing stale connection ${wsId} for ${short(conn.terminalId)}`);
-          ws.terminate();
-          continue;
+      for (const [termId, terminal] of this._terminals) {
+        for (const ws of terminal.clients) {
+          if (ws._pendingPing && (now - ws._pendingPing > HEARTBEAT_TIMEOUT)) {
+            log.debug(`[ws] heartbeat timeout, killing stale connection for ${short(termId)}`);
+            ws.terminate();
+            continue;
+          }
+          ws._pendingPing = now;
+          try { ws.ping(); } catch (err) { log.debug('[ws] ping failed:', err.message); }
         }
-        ws._pendingPing = now;
-        try { ws.ping(); } catch (err) { log.debug('[ws] ping failed:', err.message); }
       }
     }, HEARTBEAT_INTERVAL);
   }
@@ -189,69 +190,77 @@ class TerminalWSServer {
   // --- PTY Lifecycle ---
 
   /**
-   * Wire onData/onExit handlers for a per-connection PTY.
+   * Wire onData/onExit handlers on the current terminal.pty.
    * If the PTY exits but the tmux session is still alive, automatically
-   * re-attach for this connection only.
+   * re-attach instead of telling clients the terminal died.
    */
-  _setupPtyHandlers(wsId, conn) {
-    const pty = conn.pty;
+  _setupPtyHandlers(terminalId, terminal) {
+    const pty = terminal.pty;
 
     pty.onData((data) => {
-      this._activity.recordOutput(conn.terminalId);
-      if (conn.ws.readyState === conn.ws.OPEN) {
-        this._safeSend(conn.ws, JSON.stringify({ type: 'output', data }));
+      this._activity.recordOutput(terminalId);
+      const msg = JSON.stringify({ type: 'output', data });
+      for (const client of terminal.clients) {
+        if (client.readyState === client.OPEN) {
+          this._safeSend(client, msg);
+        }
+      }
+      terminal.outputBuffer += data;
+      if (terminal.outputBuffer.length > 65536) {
+        terminal.outputBuffer = terminal.outputBuffer.slice(-65536);
       }
     });
 
     pty.onExit(async ({ exitCode, signal }) => {
-      log.warn(`[pty] exited conn=${wsId} terminal=${short(conn.terminalId)} code=${exitCode} signal=${signal || 'none'}`);
+      log.warn(`[pty] exited ${short(terminalId)} code=${exitCode} signal=${signal || 'none'} clients=${terminal.clients.size}`);
 
-      // If connection was already cleaned up, nothing to do
-      if (!this._connections.has(wsId)) {
-        log.debug(`[pty] conn ${wsId} already removed, ignoring exit`);
+      // If terminal was already cleaned up (grace period or destroy), nothing to do
+      if (!this._terminals.has(terminalId)) {
+        log.debug(`[pty] ${short(terminalId)} already removed from map, ignoring exit`);
         return;
       }
 
       // Check if the tmux session is still alive
       let alive = false;
       try {
-        alive = await this._sessionManager.tmuxSessionExists(conn.terminalId);
+        alive = await this._sessionManager.tmuxSessionExists(terminalId);
       } catch {}
 
-      if (alive && conn.reattachCount < MAX_REATTACH) {
-        conn.reattachCount++;
-        log.log(`[pty] tmux session ${short(conn.terminalId)} still alive, re-attaching conn=${wsId} (attempt ${conn.reattachCount}/${MAX_REATTACH})...`);
+      if (alive && (terminal.reattachCount || 0) < MAX_REATTACH) {
+        terminal.reattachCount = (terminal.reattachCount || 0) + 1;
+        log.log(`[pty] tmux session ${short(terminalId)} still alive, re-attaching (attempt ${terminal.reattachCount}/${MAX_REATTACH})...`);
         try {
-          const newPty = await this._sessionManager.attachSession(conn.terminalId);
-          conn.pty = newPty;
-          this._setupPtyHandlers(wsId, conn);
-          log.log(`[pty] re-attached conn=${wsId} to ${short(conn.terminalId)} (pid ${newPty.pid})`);
+          const newPty = await this._sessionManager.attachSession(terminalId);
+          terminal.pty = newPty;
+          this._setupPtyHandlers(terminalId, terminal);
+          log.log(`[pty] re-attached to ${short(terminalId)} (pid ${newPty.pid})`);
           return;
         } catch (err) {
-          log.error(`[pty] re-attach failed for conn=${wsId} ${short(conn.terminalId)}: ${err.message}`);
+          log.error(`[pty] re-attach failed for ${short(terminalId)}: ${err.message}`);
         }
       } else if (alive) {
-        log.error(`[pty] max re-attach attempts (${MAX_REATTACH}) reached for conn=${wsId} ${short(conn.terminalId)}, giving up`);
+        log.error(`[pty] max re-attach attempts (${MAX_REATTACH}) reached for ${short(terminalId)}, giving up`);
       } else {
-        log.error(`[tmux] session ${short(conn.terminalId)} is GONE — tmux killed the session`);
+        log.error(`[tmux] session ${short(terminalId)} is GONE — tmux killed the session`);
         this._sessionManager.dumpDiagnostics().catch(() => {});
       }
 
-      // Terminal is truly dead — notify this client
-      conn.exited = true;
+      // Terminal is truly dead — notify clients
+      terminal.exited = true;
+      terminal.exitCode = exitCode;
+      terminal.exitSignal = signal;
 
-      if (conn.ws.readyState === conn.ws.OPEN) {
-        try { conn.ws.send(JSON.stringify({ type: 'exited', exitCode, signal })); } catch (err) { log.debug('[ws] failed to send exited:', err.message); }
+      const msg = JSON.stringify({ type: 'exited', exitCode, signal });
+      for (const client of terminal.clients) {
+        if (client.readyState === client.OPEN) {
+          try { client.send(msg); } catch (err) { log.debug('[ws] failed to send exited:', err.message); }
+        }
       }
 
-      // Clean up after a short delay
       setTimeout(() => {
-        this._connections.delete(wsId);
-        // Only remove activity tracking if no other connections use this terminal
-        const stillConnected = [...this._connections.values()].some(c => c.terminalId === conn.terminalId);
-        if (!stillConnected) {
-          this._activity.removeTerminal(conn.terminalId);
-        }
+        terminal.outputBuffer = '';
+        this._terminals.delete(terminalId);
+        this._activity.removeTerminal(terminalId);
       }, 5000);
     });
   }
@@ -259,28 +268,55 @@ class TerminalWSServer {
   // --- Terminal Connections ---
 
   async _handleTerminalConnection(ws, terminalId) {
-    // Every client gets its own PTY (tmux attach-session process)
-    let pty;
-    try {
-      pty = await this._sessionManager.attachSession(terminalId);
-    } catch (err) {
-      log.warn(`[pty] attach failed for ${short(terminalId)}: ${err.message}`);
-      ws.close(4004, `Terminal not found: ${terminalId}`);
-      return;
+    let terminal = this._terminals.get(terminalId);
+
+    if (terminal) {
+      // Reconnecting to existing PTY — cancel any pending disconnect timer
+      if (terminal.disconnectTimer) {
+        log.debug(`[ws] client reconnected to ${short(terminalId)} within grace period`);
+        clearTimeout(terminal.disconnectTimer);
+        terminal.disconnectTimer = null;
+      }
+
+      // If the PTY already exited, tell the client immediately
+      if (terminal.exited) {
+        ws.send(JSON.stringify({
+          type: 'exited',
+          exitCode: terminal.exitCode,
+          signal: terminal.exitSignal
+        }));
+        ws.close(4001, 'Terminal already exited');
+        return;
+      }
     }
 
-    const wsId = this._nextWsId++;
-    const conn = { ws, pty, terminalId, exited: false, reattachCount: 0 };
-    this._connections.set(wsId, conn);
+    if (!terminal) {
+      let pty;
+      try {
+        pty = await this._sessionManager.attachSession(terminalId);
+      } catch (err) {
+        log.warn(`[pty] attach failed for ${short(terminalId)}: ${err.message}`);
+        ws.close(4004, `Terminal not found: ${terminalId}`);
+        return;
+      }
 
-    log.debug(`[pty] attached conn=${wsId} to ${short(terminalId)} (pid ${pty.pid})`);
-    this._setupPtyHandlers(wsId, conn);
+      log.debug(`[pty] attached to ${short(terminalId)} (pid ${pty.pid})`);
+      terminal = { pty, clients: new Set(), disconnectTimer: null, exited: false, reattachCount: 0, outputBuffer: '' };
+      this._terminals.set(terminalId, terminal);
+      this._setupPtyHandlers(terminalId, terminal);
+    }
 
     ws._pendingPing = 0;
     ws._rateLimiter = { count: 0, windowStart: Date.now() };
     ws.on('pong', () => {
       ws._pendingPing = 0;
     });
+
+    terminal.clients.add(ws);
+
+    if (terminal.outputBuffer) {
+      try { ws.send(JSON.stringify({ type: 'output', data: terminal.outputBuffer })); } catch (e) {}
+    }
 
     ws.on('message', (raw) => {
       const now = Date.now();
@@ -300,35 +336,42 @@ class TerminalWSServer {
 
       if (msg.type === 'resize') {
         const now2 = Date.now();
-        if (ws._lastResize && now2 - ws._lastResize < 100) return;
-        ws._lastResize = now2;
+        if (terminal.lastResize && now2 - terminal.lastResize < 100) return;
+        terminal.lastResize = now2;
       }
 
       switch (msg.type) {
         case 'input':
-          if (!conn.exited) {
-            conn.pty.write(msg.data);
+          if (!terminal.exited) {
+            terminal.pty.write(msg.data);
           }
           break;
         case 'resize':
           if (
-            !conn.exited &&
+            !terminal.exited &&
             typeof msg.cols === 'number' && typeof msg.rows === 'number' &&
             msg.cols > 0 && msg.rows > 0 &&
             msg.cols <= MAX_TERM_COLS && msg.rows <= MAX_TERM_ROWS
           ) {
-            conn.pty.resize(msg.cols, msg.rows);
+            terminal.pty.resize(msg.cols, msg.rows);
           }
           break;
       }
     });
 
     ws.on('close', () => {
-      log.debug(`[ws] client disconnected conn=${wsId} from ${short(terminalId)}`);
-      if (!conn.exited) {
-        try { conn.pty.kill(); } catch (err) { log.debug('[pty] kill failed:', err.message); }
+      terminal.clients.delete(ws);
+      if (terminal.clients.size === 0 && !terminal.exited) {
+        log.debug(`[ws] last client left ${short(terminalId)}, grace period ${PTY_GRACE_PERIOD / 1000}s`);
+        // Don't kill immediately — allow reconnection within grace period
+        terminal.disconnectTimer = setTimeout(() => {
+          log.debug(`[pty] grace period expired, killing ${short(terminalId)}`);
+          try { terminal.pty.kill(); } catch (err) { log.debug('[pty] kill failed:', err.message); }
+          terminal.outputBuffer = '';
+          this._terminals.delete(terminalId);
+          this._activity.removeTerminal(terminalId);
+        }, PTY_GRACE_PERIOD);
       }
-      this._connections.delete(wsId);
     });
   }
 
@@ -355,11 +398,17 @@ class TerminalWSServer {
     }
     this._controlClients.clear();
 
-    for (const [, conn] of this._connections) {
-      conn.ws.close(1001, 'Server shutting down');
-      try { conn.pty.kill(); } catch (err) { log.debug('[pty] kill failed:', err.message); }
+    for (const [, terminal] of this._terminals) {
+      if (terminal.disconnectTimer) {
+        clearTimeout(terminal.disconnectTimer);
+      }
+      for (const ws of terminal.clients) {
+        ws.close(1001, 'Server shutting down');
+      }
+      terminal.outputBuffer = '';
+      try { terminal.pty.kill(); } catch (err) { log.debug('[pty] kill failed:', err.message); }
     }
-    this._connections.clear();
+    this._terminals.clear();
 
     this._terminalWss.close();
     this._controlWss.close();

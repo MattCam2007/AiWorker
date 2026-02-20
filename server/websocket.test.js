@@ -239,7 +239,7 @@ describe('TerminalWSServer', function () {
   });
 
   describe('multi-client', () => {
-    it('multiple clients each get their own PTY but see the same tmux session', async () => {
+    it('multiple clients share the same pty and receive the same output', async () => {
       const result = await sessionMgr.createTerminal('Test');
       const ws1 = await connectTerminalWS(result.id);
       const ws2 = await connectTerminalWS(result.id);
@@ -247,12 +247,8 @@ describe('TerminalWSServer', function () {
       await waitForMessage(ws1, (m) => m.type === 'output');
       await waitForMessage(ws2, (m) => m.type === 'output');
 
-      // Both clients have independent connections
-      expect(wsServer._connections.size).to.equal(2);
-
       ws1.send(JSON.stringify({ type: 'input', data: 'echo MULTI_TEST\n' }));
 
-      // Both clients see the same tmux session output
       const [msg1, msg2] = await Promise.all([
         waitForMessage(ws1, (m) => m.type === 'output' && m.data.includes('MULTI_TEST')),
         waitForMessage(ws2, (m) => m.type === 'output' && m.data.includes('MULTI_TEST'))
@@ -260,28 +256,6 @@ describe('TerminalWSServer', function () {
 
       expect(msg1.data).to.include('MULTI_TEST');
       expect(msg2.data).to.include('MULTI_TEST');
-
-      ws1.close();
-      ws2.close();
-    });
-
-    it('clients can resize independently without conflict', async () => {
-      const result = await sessionMgr.createTerminal('Test');
-      const ws1 = await connectTerminalWS(result.id);
-      const ws2 = await connectTerminalWS(result.id);
-
-      await waitForMessage(ws1, (m) => m.type === 'output');
-      await waitForMessage(ws2, (m) => m.type === 'output');
-
-      // Both clients resize to different dimensions — no error, no conflict
-      ws1.send(JSON.stringify({ type: 'resize', cols: 80, rows: 24 }));
-      ws2.send(JSON.stringify({ type: 'resize', cols: 200, rows: 50 }));
-
-      await new Promise((r) => setTimeout(r, 300));
-
-      // Both connections should still be open (no resize war)
-      expect(ws1.readyState).to.equal(WebSocket.OPEN);
-      expect(ws2.readyState).to.equal(WebSocket.OPEN);
 
       ws1.close();
       ws2.close();
@@ -341,8 +315,8 @@ describe('TerminalWSServer', function () {
       const ws = await connectTerminalWS(result.id);
       await waitForMessage(ws, (m) => m.type === 'output');
 
-      const conn = [...wsServer._connections.values()].find(c => c.terminalId === result.id);
-      const resizeSpy = sinon.spy(conn.pty, 'resize');
+      const terminal = wsServer._terminals.get(result.id);
+      const resizeSpy = sinon.spy(terminal.pty, 'resize');
 
       // All of these are out of range per the server validation
       ws.send(JSON.stringify({ type: 'resize', cols: 0, rows: 40 }));
@@ -395,8 +369,8 @@ describe('TerminalWSServer', function () {
       await waitForMessage(ws, (m) => m.type === 'output');
 
       // Simulate the terminal having exited by setting the flag directly
-      const conn = [...wsServer._connections.values()].find(c => c.terminalId === result.id);
-      conn.exited = true;
+      const terminal = wsServer._terminals.get(result.id);
+      terminal.exited = true;
 
       // Sending input while exited should be a silent no-op
       ws.send(JSON.stringify({ type: 'input', data: 'should not be written\n' }));
@@ -405,7 +379,7 @@ describe('TerminalWSServer', function () {
       // If we reach here without an uncaught exception the test passes
       expect(ws.readyState).to.equal(WebSocket.OPEN);
 
-      conn.exited = false; // Restore so cleanup doesn't misbehave
+      terminal.exited = false; // Restore so cleanup doesn't misbehave
       ws.close();
     });
   });
