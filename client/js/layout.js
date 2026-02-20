@@ -14,6 +14,8 @@
     '1x3': { cols: 1, rows: 3 }
   };
 
+  // --- Initialization ---
+
   function LayoutEngine(gridContainer) {
     this._gridContainer = gridContainer;
     this._cells = [];
@@ -46,9 +48,11 @@
     }
   };
 
+  // --- Keyboard ---
+
   LayoutEngine.prototype._initKeyboardListeners = function () {
     var self = this;
-    document.addEventListener('keydown', function (e) {
+    this._keydownHandler = function (e) {
       if (e.key === 'Escape') {
         if (self._fullscreenConnection) {
           self.exitFullscreen();
@@ -56,8 +60,16 @@
           self.exitSupersize();
         }
       }
-    });
+    };
+    document.addEventListener('keydown', this._keydownHandler);
   };
+
+  LayoutEngine.prototype.destroy = function () {
+    document.removeEventListener('keydown', this._keydownHandler);
+    if (this._resizeObserver) this._resizeObserver.disconnect();
+  };
+
+  // --- Cell Management ---
 
   LayoutEngine.prototype._createEmptyCell = function () {
     var self = this;
@@ -99,6 +111,9 @@
   };
 
   LayoutEngine.prototype._clearCell = function (cell) {
+    var existing = cell.querySelector('.cell-popover, .cell-edit-popover');
+    if (existing && existing._cleanup) existing._cleanup();
+
     var info = this._cellMap.get(cell);
     if (info) {
       info.connection = null;
@@ -348,6 +363,8 @@
     if (this._onLayoutChange) this._onLayoutChange();
   };
 
+  // --- Minimized Terminals ---
+
   LayoutEngine.prototype.minimizeTerminal = function (terminalId) {
     var self = this;
     var found = false;
@@ -398,6 +415,8 @@
     this._minimized.delete(terminalId);
   };
 
+  // --- Popovers ---
+
   LayoutEngine.prototype._handleCellClick = function (cell) {
     var cellInfo = this._cellMap.get(cell);
     if (!cellInfo || !cellInfo.connection) {
@@ -438,15 +457,14 @@
     // Close on outside click
     setTimeout(function () {
       if (typeof document === 'undefined') return;
-      document.addEventListener(
-        'click',
-        function closePopover(e) {
-          if (!popover.contains(e.target)) {
-            popover.remove();
-            document.removeEventListener('click', closePopover);
-          }
+      var closePopover = function (e) {
+        if (!popover.contains(e.target)) {
+          popover.remove();
+          document.removeEventListener('click', closePopover);
         }
-      );
+      };
+      popover._cleanup = function () { document.removeEventListener('click', closePopover); };
+      document.addEventListener('click', closePopover);
     }, 0);
   };
 
@@ -569,6 +587,7 @@
 
     setTimeout(function () {
       if (typeof document === 'undefined') return;
+      popover._cleanup = function () { document.removeEventListener('click', closeEditPopover); };
       document.addEventListener('click', closeEditPopover);
     }, 0);
   };
@@ -632,6 +651,8 @@
     return container;
   };
 
+  // --- Header ---
+
   LayoutEngine.prototype.updateHeader = function (terminalId, name, headerBg, headerColor) {
     var self = this;
     // Update grid cell header
@@ -648,6 +669,8 @@
       }
     });
   };
+
+  // --- Fullscreen ---
 
   LayoutEngine.prototype.enterFullscreen = function (terminalId, connection) {
     var overlay = document.getElementById('fullscreen-overlay');
@@ -697,6 +720,8 @@
     this._fullscreenConnection = null;
     this._fullscreenOrigCell = null;
   };
+
+  // --- Supersize ---
 
   LayoutEngine.prototype.supersize = function (terminalId) {
     // If already supersized, exit first
@@ -859,6 +884,8 @@
     this._supersizeTerminalId = null;
     this._gridContainer.classList.remove('grid-container-supersized');
   };
+
+  // --- Layout / Resize ---
 
   LayoutEngine.prototype.refitAll = function () {
     this._cellMap.forEach(function (info) {

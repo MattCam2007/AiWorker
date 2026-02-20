@@ -3,15 +3,22 @@ const { WebSocketServer } = require('ws');
 const { ActivityTracker } = require('./activity');
 const log = require('./log');
 
+const MAX_TERM_COLS = 500;
+const MAX_TERM_ROWS = 200;
+
 const PTY_GRACE_PERIOD = 30000; // 30s before killing orphaned PTY
 const HEARTBEAT_INTERVAL = 15000; // 15s ping interval
 const HEARTBEAT_TIMEOUT = 10000; // 10s to receive pong
+const MAX_REATTACH = 5; // max PTY re-attach attempts before giving up
 
 function short(id) { return id ? id.slice(0, 8) : '?'; }
 
 class TerminalWSServer {
-  constructor(httpServer, sessionManager) {
+  // --- Constructor / Initialization ---
+
+  constructor(httpServer, sessionManager, options = {}) {
     this._sessionManager = sessionManager;
+    this._serverToken = options.serverToken || null;
     // terminalId -> { pty, clients: Set<ws>, disconnectTimer, exited }
     this._terminals = new Map();
     this._activity = new ActivityTracker();
@@ -24,7 +31,25 @@ class TerminalWSServer {
     this._controlWss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
 
     httpServer.on('upgrade', (req, socket, head) => {
-      const pathname = new URL(req.url, `http://${req.headers.host}`).pathname;
+      const origin = req.headers.origin;
+      if (origin) {
+        const host = req.headers.host;
+        if (origin !== `http://${host}` && origin !== `https://${host}`) {
+          socket.destroy();
+          return;
+        }
+      }
+
+      const url = new URL(req.url, `http://${req.headers.host}`);
+      if (this._serverToken) {
+        if (url.searchParams.get('t') !== this._serverToken) {
+          socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
+          socket.destroy();
+          return;
+        }
+      }
+
+      const pathname = url.pathname;
 
       if (pathname === '/ws/control') {
         this._controlWss.handleUpgrade(req, socket, head, (ws) => {
@@ -48,7 +73,7 @@ class TerminalWSServer {
     this._startHeartbeat();
   }
 
-  // --- Heartbeat / ping-pong ---
+  // --- Heartbeat ---
 
   _startHeartbeat() {
     this._heartbeatInterval = setInterval(() => {
@@ -61,7 +86,7 @@ class TerminalWSServer {
           continue;
         }
         ws._pendingPing = now;
-        try { ws.ping(); } catch {}
+        try { ws.ping(); } catch (err) { log.debug('[ws] ping failed:', err.message); }
       }
 
       // Ping terminal clients
@@ -73,13 +98,13 @@ class TerminalWSServer {
             continue;
           }
           ws._pendingPing = now;
-          try { ws.ping(); } catch {}
+          try { ws.ping(); } catch (err) { log.debug('[ws] ping failed:', err.message); }
         }
       }
     }, HEARTBEAT_INTERVAL);
   }
 
-  // --- Control channel ---
+  // --- Control Channel ---
 
   _handleControlConnection(ws) {
     this._controlClients.add(ws);
@@ -115,7 +140,7 @@ class TerminalWSServer {
           }
           case 'update_terminal': {
             if (!msg.id) break;
-            var updates = {};
+            const updates = {};
             if (msg.name !== undefined) updates.name = msg.name;
             if (msg.headerBg !== undefined) updates.headerBg = msg.headerBg;
             if (msg.headerColor !== undefined) updates.headerColor = msg.headerColor;
@@ -128,7 +153,7 @@ class TerminalWSServer {
         log.error('Control WebSocket handler error:', err);
         try {
           ws.send(JSON.stringify({ type: 'error', message: err.message || 'Internal error' }));
-        } catch {}
+        } catch (err) { log.debug('[ws] failed to send error:', err.message); }
       }
     });
 
@@ -141,9 +166,17 @@ class TerminalWSServer {
     const data = typeof msg === 'string' ? msg : JSON.stringify(msg);
     for (const ws of this._controlClients) {
       if (ws.readyState === ws.OPEN) {
-        ws.send(data);
+        this._safeSend(ws, data);
       }
     }
+  }
+
+  _safeSend(ws, data) {
+    if (ws.bufferedAmount > 256 * 1024) {
+      log.debug('[ws] skipping send, buffer full');
+      return;
+    }
+    try { ws.send(data); } catch (err) { log.debug('[ws] send failed:', err.message); }
   }
 
   async _broadcastSessions() {
@@ -155,7 +188,84 @@ class TerminalWSServer {
     this._sendToControl({ type: 'config_reload', config });
   }
 
-  // --- Terminal connections ---
+  // --- PTY Lifecycle ---
+
+  /**
+   * Wire onData/onExit handlers on the current terminal.pty.
+   * If the PTY exits but the tmux session is still alive, automatically
+   * re-attach instead of telling clients the terminal died.
+   */
+  _setupPtyHandlers(terminalId, terminal) {
+    const pty = terminal.pty;
+
+    pty.onData((data) => {
+      this._activity.recordOutput(terminalId);
+      const msg = JSON.stringify({ type: 'output', data });
+      for (const client of terminal.clients) {
+        if (client.readyState === client.OPEN) {
+          this._safeSend(client, msg);
+        }
+      }
+      terminal.outputBuffer += data;
+      if (terminal.outputBuffer.length > 65536) {
+        terminal.outputBuffer = terminal.outputBuffer.slice(-65536);
+      }
+    });
+
+    pty.onExit(async ({ exitCode, signal }) => {
+      log.warn(`[pty] exited ${short(terminalId)} code=${exitCode} signal=${signal || 'none'} clients=${terminal.clients.size}`);
+
+      // If terminal was already cleaned up (grace period or destroy), nothing to do
+      if (!this._terminals.has(terminalId)) {
+        log.debug(`[pty] ${short(terminalId)} already removed from map, ignoring exit`);
+        return;
+      }
+
+      // Check if the tmux session is still alive
+      let alive = false;
+      try {
+        alive = await this._sessionManager.tmuxSessionExists(terminalId);
+      } catch {}
+
+      if (alive && (terminal.reattachCount || 0) < MAX_REATTACH) {
+        terminal.reattachCount = (terminal.reattachCount || 0) + 1;
+        log.log(`[pty] tmux session ${short(terminalId)} still alive, re-attaching (attempt ${terminal.reattachCount}/${MAX_REATTACH})...`);
+        try {
+          const newPty = await this._sessionManager.attachSession(terminalId);
+          terminal.pty = newPty;
+          this._setupPtyHandlers(terminalId, terminal);
+          log.log(`[pty] re-attached to ${short(terminalId)} (pid ${newPty.pid})`);
+          return;
+        } catch (err) {
+          log.error(`[pty] re-attach failed for ${short(terminalId)}: ${err.message}`);
+        }
+      } else if (alive) {
+        log.error(`[pty] max re-attach attempts (${MAX_REATTACH}) reached for ${short(terminalId)}, giving up`);
+      } else {
+        log.error(`[tmux] session ${short(terminalId)} is GONE — tmux killed the session`);
+        this._sessionManager.dumpDiagnostics().catch(() => {});
+      }
+
+      // Terminal is truly dead — notify clients
+      terminal.exited = true;
+      terminal.exitCode = exitCode;
+      terminal.exitSignal = signal;
+
+      const msg = JSON.stringify({ type: 'exited', exitCode, signal });
+      for (const client of terminal.clients) {
+        if (client.readyState === client.OPEN) {
+          try { client.send(msg); } catch (err) { log.debug('[ws] failed to send exited:', err.message); }
+        }
+      }
+
+      setTimeout(() => {
+        terminal.outputBuffer = '';
+        this._terminals.delete(terminalId);
+      }, 5000);
+    });
+  }
+
+  // --- Terminal Connections ---
 
   async _handleTerminalConnection(ws, terminalId) {
     let terminal = this._terminals.get(terminalId);
@@ -191,74 +301,32 @@ class TerminalWSServer {
       }
 
       log.debug(`[pty] attached to ${short(terminalId)} (pid ${pty.pid})`);
-      terminal = { pty, clients: new Set(), disconnectTimer: null, exited: false };
+      terminal = { pty, clients: new Set(), disconnectTimer: null, exited: false, reattachCount: 0, outputBuffer: '' };
       this._terminals.set(terminalId, terminal);
-
-      pty.onData((data) => {
-        this._activity.recordOutput(terminalId);
-        const msg = JSON.stringify({ type: 'output', data });
-        for (const client of terminal.clients) {
-          if (client.readyState === client.OPEN) {
-            client.send(msg);
-          }
-        }
-      });
-
-      pty.onExit(({ exitCode, signal }) => {
-        log.warn(`[pty] exited ${short(terminalId)} code=${exitCode} signal=${signal || 'none'} clients=${terminal.clients.size}`);
-
-        const tmuxName = this._sessionManager._tmuxSessionName(terminalId);
-        const tmuxSocket = 'terminaldeck';
-
-        // Try to capture pane info before it disappears
-        const { execFile: execFileCb } = require('child_process');
-        execFileCb('tmux', ['-L', tmuxSocket, 'list-panes', '-t', tmuxName, '-F',
-          '#{pane_pid} #{pane_dead} #{pane_dead_status}'], (err, stdout) => {
-          if (err) {
-            log.warn(`[tmux] could not query panes for ${short(terminalId)}: ${err.message}`);
-          } else {
-            log.debug(`[tmux] pane state for ${short(terminalId)}: ${stdout.trim()}`);
-          }
-        });
-
-        // Immediately check if the tmux session is still alive
-        this._sessionManager._tmuxSessionExists(terminalId).then((alive) => {
-          if (!alive) {
-            log.error(`[tmux] session ${short(terminalId)} is GONE — tmux killed the session`);
-            this._sessionManager._dumpDiagnostics().catch(() => {});
-          } else {
-            log.debug(`[tmux] session ${short(terminalId)} still alive (attach process exited)`);
-          }
-        }).catch(() => {});
-
-        terminal.exited = true;
-        terminal.exitCode = exitCode;
-        terminal.exitSignal = signal;
-
-        // Notify all connected clients
-        const msg = JSON.stringify({ type: 'exited', exitCode, signal });
-        for (const client of terminal.clients) {
-          if (client.readyState === client.OPEN) {
-            try { client.send(msg); } catch {}
-          }
-        }
-
-        // Clean up after a short delay (let clients receive the message)
-        setTimeout(() => {
-          this._terminals.delete(terminalId);
-        }, 5000);
-      });
+      this._setupPtyHandlers(terminalId, terminal);
     }
 
     ws._pendingPing = 0;
+    ws._rateLimiter = { count: 0, windowStart: Date.now() };
     ws.on('pong', () => {
       ws._pendingPing = 0;
     });
 
-    const { pty } = terminal;
     terminal.clients.add(ws);
 
+    if (terminal.outputBuffer) {
+      try { ws.send(JSON.stringify({ type: 'output', data: terminal.outputBuffer })); } catch (e) {}
+    }
+
     ws.on('message', (raw) => {
+      const now = Date.now();
+      if (now - ws._rateLimiter.windowStart > 1000) {
+        ws._rateLimiter.count = 0;
+        ws._rateLimiter.windowStart = now;
+      }
+      ws._rateLimiter.count++;
+      if (ws._rateLimiter.count > 100) return; // drop silently
+
       let msg;
       try {
         msg = JSON.parse(raw.toString());
@@ -266,10 +334,16 @@ class TerminalWSServer {
         return;
       }
 
+      if (msg.type === 'resize') {
+        const now2 = Date.now();
+        if (terminal.lastResize && now2 - terminal.lastResize < 100) return;
+        terminal.lastResize = now2;
+      }
+
       switch (msg.type) {
         case 'input':
           if (!terminal.exited) {
-            pty.write(msg.data);
+            terminal.pty.write(msg.data);
           }
           break;
         case 'resize':
@@ -277,9 +351,9 @@ class TerminalWSServer {
             !terminal.exited &&
             typeof msg.cols === 'number' && typeof msg.rows === 'number' &&
             msg.cols > 0 && msg.rows > 0 &&
-            msg.cols <= 500 && msg.rows <= 200
+            msg.cols <= MAX_TERM_COLS && msg.rows <= MAX_TERM_ROWS
           ) {
-            pty.resize(msg.cols, msg.rows);
+            terminal.pty.resize(msg.cols, msg.rows);
           }
           break;
       }
@@ -292,14 +366,15 @@ class TerminalWSServer {
         // Don't kill immediately — allow reconnection within grace period
         terminal.disconnectTimer = setTimeout(() => {
           log.debug(`[pty] grace period expired, killing ${short(terminalId)}`);
-          try { pty.kill(); } catch {}
+          try { terminal.pty.kill(); } catch (err) { log.debug('[pty] kill failed:', err.message); }
+          terminal.outputBuffer = '';
           this._terminals.delete(terminalId);
         }, PTY_GRACE_PERIOD);
       }
     });
   }
 
-  // --- Activity broadcasting ---
+  // --- Broadcasting ---
 
   startActivityBroadcasting() {
     this._activity.startBroadcasting((msg) => {
@@ -333,7 +408,8 @@ class TerminalWSServer {
       for (const ws of terminal.clients) {
         ws.close(1001, 'Server shutting down');
       }
-      try { terminal.pty.kill(); } catch {}
+      terminal.outputBuffer = '';
+      try { terminal.pty.kill(); } catch (err) { log.debug('[pty] kill failed:', err.message); }
     }
     this._terminals.clear();
 

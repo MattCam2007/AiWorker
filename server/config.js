@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { EventEmitter } = require('events');
+const { deepEqual } = require('./utils');
 
 const DEFAULT_SETTINGS = {
   theme: {
@@ -11,25 +12,6 @@ const DEFAULT_SETTINGS = {
   },
   shell: '/bin/bash'
 };
-
-function deepEqual(a, b) {
-  if (a === b) return true;
-  if (a == null || b == null) return false;
-  if (typeof a !== typeof b) return false;
-  if (typeof a !== 'object') return false;
-
-  if (Array.isArray(a) !== Array.isArray(b)) return false;
-
-  const keysA = Object.keys(a);
-  const keysB = Object.keys(b);
-  if (keysA.length !== keysB.length) return false;
-
-  for (const key of keysA) {
-    if (!Object.prototype.hasOwnProperty.call(b, key)) return false;
-    if (!deepEqual(a[key], b[key])) return false;
-  }
-  return true;
-}
 
 class ConfigManager extends EventEmitter {
   constructor(configPath) {
@@ -94,6 +76,29 @@ class ConfigManager extends EventEmitter {
   _validate(config) {
     if (config.settings && typeof config.settings !== 'object') {
       throw new Error('"settings" must be an object');
+    }
+    if (config.settings) {
+      const s = config.settings;
+      if (s.theme !== undefined && (typeof s.theme !== 'object' || s.theme === null || Array.isArray(s.theme))) {
+        throw new Error('settings.theme must be an object');
+      }
+      if (s.theme) {
+        if (s.theme.fontSize !== undefined && (typeof s.theme.fontSize !== 'number' || s.theme.fontSize < 6 || s.theme.fontSize > 72)) {
+          throw new Error('settings.theme.fontSize must be a number between 6 and 72');
+        }
+        if (s.theme.fontFamily !== undefined && typeof s.theme.fontFamily !== 'string') {
+          throw new Error('settings.theme.fontFamily must be a string');
+        }
+        if (s.theme.background !== undefined && typeof s.theme.background !== 'string') {
+          throw new Error('settings.theme.background must be a string');
+        }
+        if (s.theme.defaultColor !== undefined && typeof s.theme.defaultColor !== 'string') {
+          throw new Error('settings.theme.defaultColor must be a string');
+        }
+      }
+      if (s.shell !== undefined && typeof s.shell !== 'string') {
+        throw new Error('settings.shell must be a string');
+      }
     }
   }
 

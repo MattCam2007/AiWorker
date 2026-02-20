@@ -8,6 +8,9 @@ const log = require('./log');
 
 const execFileAsync = util.promisify(execFile);
 
+const DIAG_TIMEOUT_MS = 2000;
+const DIAG_GREP_TIMEOUT_MS = 30000;
+
 const SESSION_PREFIX = 'terminaldeck-';
 const TMUX_SOCKET = 'terminaldeck'; // Dedicated socket to isolate from processes inside terminals
 const HEALTH_CHECK_INTERVAL = 10000; // 10s
@@ -103,6 +106,7 @@ class SessionManager extends EventEmitter {
     if (!isValidCommand(shell)) {
       throw new Error(`Invalid command: ${shell}`);
     }
+    if (/[\n\r\0]/.test(shell)) throw new Error('Invalid command: contains control characters');
     const validBg = isValidColor(headerBg) ? headerBg : null;
     const validColor = isValidColor(headerColor) ? headerColor : null;
     const tmuxName = this._tmuxSessionName(id);
@@ -251,7 +255,7 @@ class SessionManager extends EventEmitter {
 
     // Check for OOM kills in dmesg
     try {
-      const { stdout } = await execFileAsync('dmesg', ['-T', '--level=err,crit,alert,emerg'], { timeout: 2000 });
+      const { stdout } = await execFileAsync('dmesg', ['-T', '--level=err,crit,alert,emerg'], { timeout: DIAG_TIMEOUT_MS });
       const oomLines = stdout.split('\n').filter(l => /oom|killed process|out of memory/i.test(l)).slice(-5);
       if (oomLines.length) {
         log.error('[diag] recent OOM/kill events:');
@@ -279,7 +283,7 @@ class SessionManager extends EventEmitter {
     if (process.env.DEBUG === '1' || process.env.DEBUG === 'true') {
       // Dump tmux lifecycle event hooks log
       try {
-        const { stdout } = await execFileAsync('cat', ['/tmp/tmux-events.log'], { timeout: 2000 });
+        const { stdout } = await execFileAsync('cat', ['/tmp/tmux-events.log'], { timeout: DIAG_TIMEOUT_MS });
         if (stdout.trim()) {
           log.debug(`[diag] tmux lifecycle events:\n${stdout.trim()}`);
         }
@@ -289,7 +293,7 @@ class SessionManager extends EventEmitter {
       try {
         const { stdout: files } = await execFileAsync('bash', ['-c',
           'ls -t /app/tmux-server-*.log /home/*/tmux-server-*.log /tmp/tmux-server-*.log /tmp/tmux-*/tmux-server-*.log 2>/dev/null | head -1'
-        ], { timeout: 2000 });
+        ], { timeout: DIAG_TIMEOUT_MS });
         const logFile = files.trim();
         if (logFile) {
           try {
@@ -297,7 +301,7 @@ class SessionManager extends EventEmitter {
               '-B', '50', '-m', '1',
               'session_destroy',
               logFile
-            ], { timeout: 30000, maxBuffer: 1024 * 1024 });
+            ], { timeout: DIAG_GREP_TIMEOUT_MS, maxBuffer: 1024 * 1024 });
             log.debug(`[diag] tmux: 50 lines before session_destroy:\n${events}`);
           } catch {
             log.debug(`[diag] no session_destroy found in tmux server log`);

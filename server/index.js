@@ -23,6 +23,13 @@ const MIME_TYPES = {
 
 const CLIENT_DIR = path.join(__dirname, '..', 'client');
 
+function setSecurityHeaders(res) {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+}
+
 function serveStatic(req, res) {
   let filePath = req.url === '/' ? '/index.html' : req.url;
   // Strip query strings
@@ -33,6 +40,7 @@ function serveStatic(req, res) {
 
   // Ensure we're still within CLIENT_DIR
   if (!fullPath.startsWith(CLIENT_DIR + path.sep)) {
+    setSecurityHeaders(res);
     res.writeHead(403);
     res.end('Forbidden');
     return;
@@ -40,18 +48,23 @@ function serveStatic(req, res) {
 
   fs.readFile(fullPath, (err, data) => {
     if (err) {
+      setSecurityHeaders(res);
       res.writeHead(404);
       res.end('Not Found');
       return;
     }
     const ext = path.extname(fullPath);
     const contentType = MIME_TYPES[ext] || 'application/octet-stream';
+    setSecurityHeaders(res);
     res.writeHead(200, { 'Content-Type': contentType });
     res.end(data);
   });
 }
 
 async function createApp(options = {}) {
+  const { randomBytes } = require('crypto');
+  const serverToken = randomBytes(32).toString('hex');
+
   const configPath = options.configPath || path.join(__dirname, '..', 'config', 'terminaldeck.json');
   const port = options.port ?? parseInt(process.env.TERMINALDECK_PORT || '3000', 10);
 
@@ -64,18 +77,24 @@ async function createApp(options = {}) {
   const server = http.createServer((req, res) => {
     // API routes
     if (req.url === '/api/config' && req.method === 'GET') {
+      setSecurityHeaders(res);
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(configManager.getConfig()));
+      res.end(JSON.stringify({ ...configManager.getConfig(), serverToken }));
       return;
     }
 
     if (req.url === '/api/sessions' && req.method === 'GET') {
-      sessionManager.listSessions().then((sessions) => {
+      (async () => {
+        const sessions = await sessionManager.listSessions();
+        setSecurityHeaders(res);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(sessions));
-      }).catch((err) => {
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Failed to list sessions' }));
+      })().catch((err) => {
+        if (!res.headersSent) {
+          setSecurityHeaders(res);
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
       });
       return;
     }
@@ -83,16 +102,21 @@ async function createApp(options = {}) {
     if (req.method === 'GET' && req.url.startsWith('/api/files')) {
       const url = new URL(req.url, 'http://localhost');
       const dirPath = url.searchParams.get('path') || '.';
-      listDirectory(dirPath).then(function (entries) {
+      (async () => {
+        const entries = await listDirectory(dirPath);
+        setSecurityHeaders(res);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(entries));
-      }).catch(function (err) {
-        if (err.code === 'TRAVERSAL') {
-          res.writeHead(403, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Forbidden' }));
-        } else {
-          res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Failed to list directory' }));
+      })().catch((err) => {
+        if (!res.headersSent) {
+          setSecurityHeaders(res);
+          if (err.code === 'TRAVERSAL') {
+            res.writeHead(403, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Forbidden' }));
+          } else {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: err.message }));
+          }
         }
       });
       return;
@@ -102,12 +126,10 @@ async function createApp(options = {}) {
     serveStatic(req, res);
   });
 
-  const wsServer = new TerminalWSServer(server, sessionManager);
+  const wsServer = new TerminalWSServer(server, sessionManager, { serverToken });
   wsServer.startActivityBroadcasting();
 
-  sessionManager._onSessionDied = (id, name) => {
-    wsServer._broadcastSessions();
-  };
+  sessionManager.on('sessionDied', () => { wsServer._broadcastSessions(); });
   sessionManager.startHealthCheck();
 
   // Config hot-reload (settings/theme only)

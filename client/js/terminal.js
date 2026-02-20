@@ -5,6 +5,7 @@
 
   var RECONNECT_BASE = 1000;
   var RECONNECT_CAP = 30000;
+  var OUTPUT_TAIL_CHARS = 80;
 
   // Strip ANSI escape sequences
   function stripAnsi(str) {
@@ -90,19 +91,27 @@
 
   TerminalConnection.prototype._connectWS = function () {
     var self = this;
+
+    if (this._ws) {
+      this._ws.onopen = null; this._ws.onmessage = null; this._ws.onclose = null;
+      if (this._ws.readyState < WebSocket.CLOSING) this._ws.close();
+      this._ws = null;
+    }
+
     var protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     var host = window.location.host || 'localhost:3000';
-    var url = protocol + '//' + host + '/ws/terminal/' + this.id;
+    var token = (ns._serverToken || '');
+    var url = protocol + '//' + host + '/ws/terminal/' + this.id + (token ? '?t=' + encodeURIComponent(token) : '');
 
     this._ws = new WebSocket(url);
 
-    this._ws.addEventListener('open', function () {
+    this._ws.onopen = function () {
       self._reconnectAttempts = 0;
       self._sendResize();
       if (self._onStatusChange) self._onStatusChange(self.id, 'connected');
-    });
+    };
 
-    this._ws.addEventListener('message', function (event) {
+    this._ws.onmessage = function (event) {
       var msg;
       try {
         msg = JSON.parse(event.data);
@@ -117,7 +126,7 @@
           }
           // Track activity
           var stripped = stripAnsi(msg.data);
-          self._lastOutput = (self._lastOutput + stripped).slice(-80);
+          self._lastOutput = (self._lastOutput + stripped).slice(-OUTPUT_TAIL_CHARS);
           if (self._onActivity) self._onActivity(self.id);
           break;
         case 'exited':
@@ -135,16 +144,16 @@
           if (self._onStatusChange) self._onStatusChange(self.id, 'exited');
           break;
       }
-    });
+    };
 
-    this._ws.addEventListener('close', function (event) {
+    this._ws.onclose = function (event) {
       if (self._onStatusChange) self._onStatusChange(self.id, 'disconnected');
       // Don't reconnect if the terminal process exited or was explicitly closed
       if (self._exited || event.code === 4001) return;
       if (!self._destroyed && !self._detaching) {
         self._scheduleReconnect();
       }
-    });
+    };
   };
 
   TerminalConnection.prototype._sendResize = function () {

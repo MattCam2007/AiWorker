@@ -3,6 +3,8 @@
 
   var ns = (window.TerminalDeck = window.TerminalDeck || {});
 
+  // --- Init ---
+
   function App() {
     this._config = null;
     this._connections = {};
@@ -21,6 +23,7 @@
       .then(function (res) { return res.json(); })
       .then(function (config) {
         self._config = config;
+        ns._serverToken = config.serverToken || '';
         self._applyTheme(config.settings.theme);
         self._createEngine();
         self._buildHeader();
@@ -36,6 +39,13 @@
       })
       .then(function () {
         self._updateStatus();
+      })
+      .catch(function (err) {
+        console.error('[app] init error:', err);
+        var statusEl = document.getElementById('connection-status');
+        if (statusEl) {
+          statusEl.className = 'status-indicator status-red';
+        }
       });
   };
 
@@ -110,7 +120,7 @@
     var self = this;
     var protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     var host = window.location.host || 'localhost:3000';
-    var url = protocol + '//' + host + '/ws/control';
+    var url = protocol + '//' + host + '/ws/control?t=' + encodeURIComponent(ns._serverToken || '');
 
     this._controlWs = new WebSocket(url);
 
@@ -175,7 +185,7 @@
     }
   };
 
-  // --- Session loading ---
+  // --- Session Management ---
 
   App.prototype._loadSessions = function () {
     var self = this;
@@ -183,6 +193,9 @@
       .then(function (res) { return res.json(); })
       .then(function (sessions) {
         self._applySessions(sessions);
+      })
+      .catch(function (err) {
+        console.error('[app] loadSessions error:', err);
       });
   };
 
@@ -253,7 +266,7 @@
     this._engine._addToMinimized(id, conn);
   };
 
-  // --- Session updates from server ---
+  // --- Session Updates ---
 
   App.prototype._handleSessionsUpdate = function (sessions) {
     var self = this;
@@ -309,7 +322,62 @@
     this._applyTheme(newConfig.settings.theme);
   };
 
-  // --- Create terminal dialog ---
+  // --- Create Dialog ---
+
+  App.prototype._buildNameField = function () {
+    var nameLabel = document.createElement('label');
+    nameLabel.className = 'edit-label';
+    nameLabel.textContent = 'Name';
+
+    var nameInput = document.createElement('input');
+    nameInput.className = 'edit-name-input';
+    nameInput.type = 'text';
+    nameInput.placeholder = 'Session name';
+    nameInput.value = this._nextDefaultName();
+
+    return { nameLabel: nameLabel, nameInput: nameInput };
+  };
+
+  App.prototype._buildCommandField = function () {
+    var cmdLabelRow = document.createElement('div');
+    cmdLabelRow.className = 'ephemeral-label-row';
+
+    var cmdLabel = document.createElement('label');
+    cmdLabel.className = 'edit-label';
+    cmdLabel.textContent = 'Command';
+    cmdLabelRow.appendChild(cmdLabel);
+
+    var infoBtn = document.createElement('button');
+    infoBtn.className = 'ephemeral-info-btn';
+    infoBtn.type = 'button';
+    infoBtn.textContent = 'i';
+    infoBtn.title = 'Command help';
+    cmdLabelRow.appendChild(infoBtn);
+
+    var cmdInput = document.createElement('input');
+    cmdInput.className = 'edit-name-input';
+    cmdInput.type = 'text';
+    cmdInput.placeholder = 'Optional';
+
+    var infoTip = document.createElement('div');
+    infoTip.className = 'ephemeral-info-tip hidden';
+    infoTip.innerHTML =
+      '<strong>Command</strong> sets the initial process for this terminal session. ' +
+      'Leave blank to start your default shell.<br><br>' +
+      '<strong>Examples:</strong><br>' +
+      '<code>htop</code> &mdash; system monitor<br>' +
+      '<code>python3</code> &mdash; Python REPL<br>' +
+      '<code>tail -f /var/log/syslog</code> &mdash; follow a log<br>' +
+      '<code>ssh user@host</code> &mdash; remote connection<br><br>' +
+      'The command runs inside a tmux session. When the command exits, the terminal closes.';
+
+    infoBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      infoTip.classList.toggle('hidden');
+    });
+
+    return { cmdInput: cmdInput, cmdLabelRow: cmdLabelRow, infoTip: infoTip };
+  };
 
   App.prototype._wireCreateDialog = function () {
     var self = this;
@@ -337,60 +405,20 @@
     dialog.appendChild(title);
 
     // Name field
-    var nameLabel = document.createElement('label');
-    nameLabel.className = 'edit-label';
-    nameLabel.textContent = 'Name';
+    var nameField = self._buildNameField();
+    var nameLabel = nameField.nameLabel;
+    var nameInput = nameField.nameInput;
     dialog.appendChild(nameLabel);
-
-    var nameInput = document.createElement('input');
-    nameInput.className = 'edit-name-input';
-    nameInput.type = 'text';
-    nameInput.placeholder = 'Session name';
-    nameInput.value = self._nextDefaultName();
     dialog.appendChild(nameInput);
 
     // Command field with info icon
-    var cmdLabelRow = document.createElement('div');
-    cmdLabelRow.className = 'ephemeral-label-row';
-
-    var cmdLabel = document.createElement('label');
-    cmdLabel.className = 'edit-label';
-    cmdLabel.textContent = 'Command';
-    cmdLabelRow.appendChild(cmdLabel);
-
-    var infoBtn = document.createElement('button');
-    infoBtn.className = 'ephemeral-info-btn';
-    infoBtn.type = 'button';
-    infoBtn.textContent = 'i';
-    infoBtn.title = 'Command help';
-    cmdLabelRow.appendChild(infoBtn);
-
+    var cmdField = self._buildCommandField();
+    var cmdLabelRow = cmdField.cmdLabelRow;
+    var cmdInput = cmdField.cmdInput;
+    var infoTip = cmdField.infoTip;
     dialog.appendChild(cmdLabelRow);
-
-    var cmdInput = document.createElement('input');
-    cmdInput.className = 'edit-name-input';
-    cmdInput.type = 'text';
-    cmdInput.placeholder = 'Optional';
     dialog.appendChild(cmdInput);
-
-    // Info tooltip (hidden by default)
-    var infoTip = document.createElement('div');
-    infoTip.className = 'ephemeral-info-tip hidden';
-    infoTip.innerHTML =
-      '<strong>Command</strong> sets the initial process for this terminal session. ' +
-      'Leave blank to start your default shell.<br><br>' +
-      '<strong>Examples:</strong><br>' +
-      '<code>htop</code> &mdash; system monitor<br>' +
-      '<code>python3</code> &mdash; Python REPL<br>' +
-      '<code>tail -f /var/log/syslog</code> &mdash; follow a log<br>' +
-      '<code>ssh user@host</code> &mdash; remote connection<br><br>' +
-      'The command runs inside a tmux session. When the command exits, the terminal closes.';
     dialog.appendChild(infoTip);
-
-    infoBtn.addEventListener('click', function (e) {
-      e.stopPropagation();
-      infoTip.classList.toggle('hidden');
-    });
 
     // Header background color
     var selectedBg = null;
@@ -567,7 +595,7 @@
     }
   };
 
-  // --- Terminal list sidebar ---
+  // --- Sidebar / UI ---
 
   App.prototype._initTerminalList = function () {
     var container = document.getElementById('terminal-list');
@@ -679,7 +707,7 @@
     }, 1500);
   };
 
-  // --- File tree sidebar ---
+  // --- File Tree ---
 
   App.prototype._initFileTree = function () {
     var self = this;
@@ -775,8 +803,8 @@
   };
 
   App.prototype._openFileInEditor = function (filePath, fileName) {
-    // Reject paths with shell metacharacters to prevent command injection
-    if (/[;|&`$(){}[\]!#~]/.test(filePath)) return;
+    // Reject paths with shell metacharacters or control characters to prevent command injection
+    if (/[;|&`$(){}[\]!#~\n\r\0]/.test(filePath)) return;
     this._sendCreateTerminal(fileName, 'vi /workspace/' + filePath);
   };
 

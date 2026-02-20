@@ -7,20 +7,22 @@ const { TerminalWSServer } = require('./websocket');
 const { SessionManager } = require('./sessions');
 
 function cleanupTmuxSessions() {
-  try {
-    const output = execSync('tmux list-sessions -F "#{session_name}" 2>/dev/null', {
-      encoding: 'utf-8'
-    });
-    output
-      .trim()
-      .split('\n')
-      .filter((s) => s.startsWith('terminaldeck-'))
-      .forEach((s) => {
-        try {
-          execSync(`tmux kill-session -t "${s}" 2>/dev/null`);
-        } catch {}
-      });
-  } catch {}
+  // Clean up on both the default socket and the dedicated terminaldeck socket
+  for (const socketFlag of ['', '-L terminaldeck']) {
+    try {
+      const cmd = `tmux ${socketFlag} list-sessions -F "#{session_name}" 2>/dev/null`.replace(/  +/g, ' ').trim();
+      const output = execSync(cmd, { encoding: 'utf-8' });
+      output
+        .trim()
+        .split('\n')
+        .filter((s) => s.startsWith('terminaldeck-'))
+        .forEach((s) => {
+          try {
+            execSync(`tmux ${socketFlag} kill-session -t "${s}" 2>/dev/null`.replace(/  +/g, ' ').trim());
+          } catch {}
+        });
+    } catch {}
+  }
 }
 
 describe('TerminalWSServer', function () {
@@ -271,7 +273,7 @@ describe('TerminalWSServer', function () {
 
       // tmux session should still exist
       try {
-        execSync(`tmux has-session -t terminaldeck-${result.id} 2>/dev/null`);
+        execSync(`tmux -L terminaldeck has-session -t terminaldeck-${result.id} 2>/dev/null`);
       } catch {
         throw new Error('tmux session was killed on disconnect');
       }
@@ -285,6 +287,99 @@ describe('TerminalWSServer', function () {
       const msg = await waitForMessage(ws, (m) => m.type === 'output');
       expect(msg).to.have.property('type');
       expect(msg).to.have.property('data');
+      ws.close();
+    });
+  });
+
+  describe('Error scenarios', () => {
+    it('malformed JSON to control WS does not crash the server', async () => {
+      const ws = await connectControlWS();
+      ws.send('not-valid-json{{{');
+      // Allow time for the message to be processed
+      await new Promise((r) => setTimeout(r, 200));
+      // Connection should remain open — server silently ignores malformed JSON
+      expect(ws.readyState).to.equal(WebSocket.OPEN);
+      ws.close();
+    });
+
+    it('unknown message type on control WS is silently ignored', async () => {
+      const ws = await connectControlWS();
+      ws.send(JSON.stringify({ type: 'no_such_message_type', payload: 'ignored' }));
+      await new Promise((r) => setTimeout(r, 200));
+      expect(ws.readyState).to.equal(WebSocket.OPEN);
+      ws.close();
+    });
+
+    it('resize message with out-of-range values does not call pty.resize', async () => {
+      const result = await sessionMgr.createTerminal('Test');
+      const ws = await connectTerminalWS(result.id);
+      await waitForMessage(ws, (m) => m.type === 'output');
+
+      const terminal = wsServer._terminals.get(result.id);
+      const resizeSpy = sinon.spy(terminal.pty, 'resize');
+
+      // All of these are out of range per the server validation
+      ws.send(JSON.stringify({ type: 'resize', cols: 0, rows: 40 }));
+      ws.send(JSON.stringify({ type: 'resize', cols: 120, rows: 0 }));
+      ws.send(JSON.stringify({ type: 'resize', cols: 501, rows: 40 }));
+      ws.send(JSON.stringify({ type: 'resize', cols: 120, rows: 201 }));
+      ws.send(JSON.stringify({ type: 'resize', cols: -5, rows: 40 }));
+
+      await new Promise((r) => setTimeout(r, 200));
+      expect(resizeSpy.callCount).to.equal(0);
+
+      resizeSpy.restore();
+      ws.close();
+    });
+
+    it('invalid terminal ID on WS upgrade closes with code 4004', (done) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/terminal/definitely-does-not-exist`);
+      ws.on('close', (code) => {
+        expect(code).to.equal(4004);
+        done();
+      });
+      ws.on('error', () => {}); // Suppress connection-level errors
+    });
+
+    it('server token mismatch on upgrade destroys the socket (HTTP 403)', (done) => {
+      const tokenServer = http.createServer();
+      const tokenWss = new TerminalWSServer(tokenServer, sessionMgr, { serverToken: 'secret123' });
+
+      tokenServer.listen(0, () => {
+        const tokenPort = tokenServer.address().port;
+        // Connect without the required token
+        const ws = new WebSocket(`ws://127.0.0.1:${tokenPort}/ws/control`);
+        ws.on('error', () => {
+          // Expected: connection rejected
+          tokenWss.closeAll();
+          tokenServer.close(done);
+        });
+        ws.on('unexpected-response', (req, res) => {
+          expect(res.statusCode).to.equal(403);
+          ws.terminate();
+          tokenWss.closeAll();
+          tokenServer.close(done);
+        });
+      });
+    });
+
+    it('PTY write when terminal has exited does not crash', async () => {
+      const result = await sessionMgr.createTerminal('Test');
+      const ws = await connectTerminalWS(result.id);
+      await waitForMessage(ws, (m) => m.type === 'output');
+
+      // Simulate the terminal having exited by setting the flag directly
+      const terminal = wsServer._terminals.get(result.id);
+      terminal.exited = true;
+
+      // Sending input while exited should be a silent no-op
+      ws.send(JSON.stringify({ type: 'input', data: 'should not be written\n' }));
+
+      await new Promise((r) => setTimeout(r, 200));
+      // If we reach here without an uncaught exception the test passes
+      expect(ws.readyState).to.equal(WebSocket.OPEN);
+
+      terminal.exited = false; // Restore so cleanup doesn't misbehave
       ws.close();
     });
   });
