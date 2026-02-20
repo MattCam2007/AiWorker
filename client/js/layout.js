@@ -34,8 +34,13 @@
     this._rowProportions = null;
     this._gutters = [];
 
+    this._healthTimer = null;
+    this._visibilityHandler = null;
+    this._focusHandler = null;
+
     this._initResizeObserver();
     this._initKeyboardListeners();
+    this._initHealthMonitor();
   }
 
   LayoutEngine.GRID_PRESETS = GRID_PRESETS;
@@ -49,6 +54,61 @@
       });
       this._resizeObserver.observe(this._gridContainer);
     }
+  };
+
+  // --- Terminal Health Monitor ---
+  //
+  // Periodically checks all visible terminals for rendering issues
+  // (blank canvas, dimension mismatch, stale paint) and auto-corrects.
+  // Also refreshes all terminals when the browser tab/window regains focus,
+  // since the canvas renderer can go stale while backgrounded.
+
+  LayoutEngine.prototype._initHealthMonitor = function () {
+    var self = this;
+
+    // Periodic check every 2 seconds
+    this._healthTimer = setInterval(function () {
+      self._runHealthChecks();
+    }, 2000);
+
+    // Tab visibility change — terminals can go blank while backgrounded
+    this._visibilityHandler = function () {
+      if (!document.hidden) {
+        // Slight delay for browser to finish compositing after tab switch
+        setTimeout(function () { self._refreshAll(); }, 100);
+      }
+    };
+    document.addEventListener('visibilitychange', this._visibilityHandler);
+
+    // Window focus — covers alt-tab and window manager switches
+    this._focusHandler = function () {
+      setTimeout(function () { self._refreshAll(); }, 100);
+    };
+    window.addEventListener('focus', this._focusHandler);
+  };
+
+  LayoutEngine.prototype._runHealthChecks = function () {
+    this._cellMap.forEach(function (info) {
+      if (info.connection) {
+        info.connection.healthCheck();
+      }
+    });
+  };
+
+  /**
+   * Force refit + repaint on all visible terminals.  Used after tab/window
+   * regains focus when the canvas renderer may have gone stale.
+   */
+  LayoutEngine.prototype._refreshAll = function () {
+    this._cellMap.forEach(function (info) {
+      if (info.connection && info.connection._terminal && info.connection._fitAddon) {
+        info.connection._fitAddon.fit();
+        info.connection._sendResize();
+        info.connection._terminal.refresh(
+          0, info.connection._terminal.rows - 1
+        );
+      }
+    });
   };
 
   // --- Keyboard ---
@@ -68,6 +128,9 @@
   LayoutEngine.prototype.destroy = function () {
     document.removeEventListener('keydown', this._keydownHandler);
     if (this._resizeObserver) this._resizeObserver.disconnect();
+    if (this._healthTimer) clearInterval(this._healthTimer);
+    if (this._visibilityHandler) document.removeEventListener('visibilitychange', this._visibilityHandler);
+    if (this._focusHandler) window.removeEventListener('focus', this._focusHandler);
     this._removeGutters();
   };
 

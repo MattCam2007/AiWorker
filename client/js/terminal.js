@@ -289,6 +289,57 @@
     }
   };
 
+  /**
+   * Detect and fix rendering issues (blank screen, dimension mismatch,
+   * stale canvas).  Returns true if a correction was applied.
+   */
+  TerminalConnection.prototype.healthCheck = function () {
+    if (!this._terminal || !this._fitAddon || !this._element) return false;
+
+    var corrected = false;
+
+    // 1. Container must have real dimensions
+    var rect = this._element.getBoundingClientRect();
+    if (rect.width < 1 || rect.height < 1) return false; // hidden — skip
+
+    // 2. Check dimension mismatch: proposed size vs current terminal size
+    var proposed = this._fitAddon.proposeDimensions();
+    if (proposed) {
+      var colDrift = Math.abs(this._terminal.cols - proposed.cols);
+      var rowDrift = Math.abs(this._terminal.rows - proposed.rows);
+      if (colDrift > 0 || rowDrift > 0) {
+        this._fitAddon.fit();
+        this._sendResize();
+        corrected = true;
+      }
+    }
+
+    // 3. Check canvas health — xterm renders to a canvas; if it has zero
+    //    dimensions or is missing, force a full refresh cycle
+    var canvas = this._element.querySelector('canvas');
+    if (canvas) {
+      if (canvas.width < 1 || canvas.height < 1) {
+        this._fitAddon.fit();
+        this._sendResize();
+        corrected = true;
+      }
+    }
+
+    // 4. Force a full repaint from the terminal buffer.  This is cheap
+    //    (just re-draws existing content) and fixes canvas rendering that
+    //    went blank due to GPU context loss or rapid output overflow.
+    if (corrected) {
+      this._terminal.refresh(0, this._terminal.rows - 1);
+      // Clear the glyph texture atlas — fixes corrupted glyphs after
+      // GPU context loss or long-running sessions
+      if (typeof this._terminal.clearTextureAtlas === 'function') {
+        this._terminal.clearTextureAtlas();
+      }
+    }
+
+    return corrected;
+  };
+
   TerminalConnection.prototype.focus = function () {
     if (this._terminal) {
       this._terminal.focus();
