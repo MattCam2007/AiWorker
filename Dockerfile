@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y \
     python3 \
     vim \
     gosu \
+    bash-completion \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Node.js LTS

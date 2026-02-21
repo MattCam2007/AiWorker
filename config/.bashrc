@@ -11,45 +11,34 @@ if [ -z "${debian_chroot:-}" ] && [ -r /etc/debian_chroot ]; then
     debian_chroot=$(cat /etc/debian_chroot)
 fi
 
-# set a fancy prompt (non-color, unless we know we "want" color)
-case "$TERM" in
-    xterm-color|*-256color) color_prompt=yes;;
-esac
-
-# Function to get git prompt info
-git_prompt_info() {
-  local color="34"  # blue
-
-  # Check if inside a Git repository
-  if git rev-parse --is-inside-work-tree > /dev/null 2>&1; then
-    # Get the current branch name
-    local branch=$(git symbolic-ref --short HEAD 2>/dev/null || git describe --tags --exact-match 2>/dev/null || git rev-parse --short HEAD 2>/dev/null)
-
-    # Check for uncommitted changes (staged, unstaged, or untracked)
-    if [[ -n $(git status --porcelain 2>/dev/null) ]]; then
-      color="31"  # red
-    fi
-
-    # Display the branch with color
-    if [[ -n $branch ]]; then
-      echo -e "\[\e[${color}m\](${branch})\[\e[0m\] "
-    fi
-  fi
-}
-
-# Set the prompt
-PS1='\[\e[36m\]\u\[\e[37m\]@\[\e[32m\]\h\[\e[0m\]: \[\e[36m\]\w\[\e[0m\] $(git_prompt_info)\[\e[33m\]%\[\e[0m\] '
-
-unset color_prompt force_color_prompt
-
-# If this is an xterm set the title to user@host:dir
+# Xterm title prefix (user@host:dir in window title bar)
+_td_title=''
 case "$TERM" in
 xterm*|rxvt*)
-    PS1="\[\e]0;${debian_chroot:+($debian_chroot)}\u@\h: \w\a\]$PS1"
-    ;;
-*)
+    _td_title='\[\e]0;'"${debian_chroot:+($debian_chroot)}"'\u@\h: \w\a\]'
     ;;
 esac
+
+# Build PS1 inside PROMPT_COMMAND so git branch info uses standard
+# \[...\] escaping (which only works in PS1, NOT in $(command substitution)).
+# This guarantees readline calculates prompt width correctly — fixing Tab completion.
+_td_set_prompt() {
+  local git_info=""
+  if git rev-parse --is-inside-work-tree > /dev/null 2>&1; then
+    local branch
+    branch=$(git symbolic-ref --short HEAD 2>/dev/null || git describe --tags --exact-match 2>/dev/null || git rev-parse --short HEAD 2>/dev/null)
+    if [[ -n $branch ]]; then
+      local color="34"  # blue
+      if [[ -n $(git status --porcelain 2>/dev/null) ]]; then
+        color="31"  # red
+      fi
+      git_info="\[\e[${color}m\](${branch})\[\e[0m\] "
+    fi
+  fi
+
+  PS1="${_td_title}\[\e[36m\]\u\[\e[37m\]@\[\e[32m\]\h\[\e[0m\]: \[\e[36m\]\w\[\e[0m\] ${git_info}\[\e[33m\]%\[\e[0m\] "
+}
+PROMPT_COMMAND='_td_set_prompt'
 
 # enable color support of ls and also add handy aliases
 if [ -x /usr/bin/dircolors ]; then
@@ -63,6 +52,15 @@ fi
 alias ll='ls -alF'
 alias la='ls -A'
 alias l='ls -CF'
+
+# Enable programmable completion
+if ! shopt -oq posix; then
+  if [ -f /usr/share/bash-completion/bash_completion ]; then
+    . /usr/share/bash-completion/bash_completion
+  elif [ -f /etc/bash_completion ]; then
+    . /etc/bash_completion
+  fi
+fi
 
 # Claude Code CLI
 export PATH="${HOME}/.local/bin:$PATH"

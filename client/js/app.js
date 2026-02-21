@@ -33,6 +33,7 @@
         self._initSidebarSections();
         self._wireSidebarToggle();
         self._wireOrientationChange();
+        self._initMobileToolbar();
         self._connectControl();
 
         return self._loadSessions();
@@ -806,6 +807,126 @@
     // Reject paths with shell metacharacters or control characters to prevent command injection
     if (/[;|&`$(){}[\]!#~\n\r\0]/.test(filePath)) return;
     this._sendCreateTerminal(fileName, 'vi /workspace/' + filePath);
+  };
+
+  // --- Mobile Toolbar ---
+
+  App.prototype._TOOLBAR_KEYS = {
+    'esc':   '\x1b',
+    'tab':   '\t',
+    'up':    '\x1b[A',
+    'down':  '\x1b[B',
+    'left':  '\x1b[D',
+    'right': '\x1b[C',
+    'pipe':  '|',
+    'dash':  '-',
+    'tilde': '~',
+    'slash': '/',
+    'colon': ':',
+    'pgup':  '\x1b[5~',
+    'pgdn':  '\x1b[6~'
+  };
+
+  App.prototype._initMobileToolbar = function () {
+    var toolbar = document.getElementById('mobile-toolbar');
+    if (!toolbar) return;
+
+    var self = this;
+    var ctrlActive = false;
+
+    // CRITICAL: Prevent focus theft.
+    // Without this, tapping any button steals focus from xterm.js,
+    // causing keyboard dismiss → viewport resize → SIGWINCH → readline corruption.
+    toolbar.addEventListener('mousedown', function (e) {
+      e.preventDefault();
+    });
+
+    toolbar.addEventListener('click', function (e) {
+      var btn = e.target.closest('.mobile-toolbar-btn');
+      if (!btn) return;
+
+      var key = btn.dataset.key;
+      if (!key) return;
+
+      // Handle Ctrl toggle
+      if (key === 'ctrl') {
+        ctrlActive = !ctrlActive;
+        btn.classList.toggle('ctrl-active', ctrlActive);
+        return;
+      }
+
+      var data;
+      if (ctrlActive) {
+        if (key.length === 1) {
+          var code = key.toUpperCase().charCodeAt(0) - 64;
+          if (code >= 1 && code <= 26) {
+            data = String.fromCharCode(code);
+          } else {
+            data = self._TOOLBAR_KEYS[key] || key;
+          }
+        } else if (key === 'tab') {
+          data = '\t';
+        } else {
+          data = self._TOOLBAR_KEYS[key] || key;
+        }
+
+        ctrlActive = false;
+        var ctrlBtn = toolbar.querySelector('[data-key="ctrl"]');
+        if (ctrlBtn) ctrlBtn.classList.remove('ctrl-active');
+      } else {
+        data = self._TOOLBAR_KEYS[key] || key;
+      }
+
+      self._sendToActiveTerminal(data);
+    });
+
+    // visualViewport positioning: keeps toolbar above the virtual keyboard
+    if (window.visualViewport) {
+      var reposition = function () {
+        var vv = window.visualViewport;
+        var bottomOffset = window.innerHeight - (vv.offsetTop + vv.height);
+        toolbar.style.bottom = Math.max(0, bottomOffset) + 'px';
+      };
+
+      window.visualViewport.addEventListener('resize', reposition);
+      window.visualViewport.addEventListener('scroll', reposition);
+    }
+  };
+
+  App.prototype._sendToActiveTerminal = function (data) {
+    var activeConn = null;
+
+    if (this._engine) {
+      for (var i = 0; i < this._engine._cells.length; i++) {
+        var cell = this._engine._cells[i];
+        var info = this._engine._cellMap.get(cell);
+        if (info && info.connection) {
+          if (!activeConn) activeConn = info.connection;
+          if (cell.contains(document.activeElement)) {
+            activeConn = info.connection;
+            break;
+          }
+        }
+      }
+    }
+
+    if (!activeConn) return;
+
+    // Flush any pending IME composition before sending toolbar input.
+    // Mobile keyboards hold text in a composition buffer (uncommitted)
+    // until a space/punctuation is typed. Without flushing, toolbar keys
+    // like Tab arrive at the PTY before the composed text, so readline
+    // sees an empty prefix instead of what's visibly on screen.
+    var term = activeConn._terminal;
+    if (term && term.textarea) {
+      term.textarea.dispatchEvent(new CompositionEvent('compositionend'));
+    }
+
+    if (activeConn._ws && activeConn._ws.readyState === WebSocket.OPEN) {
+      activeConn._ws.send(JSON.stringify({ type: 'input', data: data }));
+    }
+
+    activeConn.focus();
   };
 
   ns.App = App;

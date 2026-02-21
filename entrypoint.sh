@@ -22,12 +22,28 @@ fi
 USER_NAME=$(getent passwd "$PUID" | cut -d: -f1)
 USER_HOME="/home/terminaldeck"
 
-# Ensure home directory exists
+# Ensure home directory exists and is owned by the runtime user
 mkdir -p "$USER_HOME"
+chown "$PUID:$PGID" "$USER_HOME"
 
-# Copy config files to user's home (don't overwrite existing - preserves customization on restart)
-[ ! -f "$USER_HOME/.bashrc" ] && cp /app/config/.bashrc "$USER_HOME/.bashrc"
-[ ! -f "$USER_HOME/.tmux.conf" ] && cp /app/config/tmux.conf "$USER_HOME/.tmux.conf"
+# Copy config files to user's home.
+# Use a version stamp so updated configs propagate on container restart.
+CONFIG_VERSION="4"
+STAMP="$USER_HOME/.config_version"
+CURRENT_VERSION=""
+[ -f "$STAMP" ] && CURRENT_VERSION=$(cat "$STAMP")
+
+if [ ! -f "$USER_HOME/.bashrc" ] || [ "$CURRENT_VERSION" != "$CONFIG_VERSION" ]; then
+    cp /app/config/.bashrc "$USER_HOME/.bashrc"
+fi
+if [ ! -f "$USER_HOME/.tmux.conf" ] || [ "$CURRENT_VERSION" != "$CONFIG_VERSION" ]; then
+    cp /app/config/tmux.conf "$USER_HOME/.tmux.conf"
+fi
+if [ ! -f "$USER_HOME/.inputrc" ] || [ "$CURRENT_VERSION" != "$CONFIG_VERSION" ]; then
+    cp /app/config/.inputrc "$USER_HOME/.inputrc"
+fi
+echo "$CONFIG_VERSION" > "$STAMP"
+chown "$PUID:$PGID" "$USER_HOME/.bashrc" "$USER_HOME/.tmux.conf" "$USER_HOME/.inputrc" "$STAMP"
 
 # Install Claude CLI if not already present
 if [ ! -f "$USER_HOME/.local/bin/claude" ]; then
@@ -43,7 +59,6 @@ fi
 chown "$PUID:$PGID" /app
 chown -R "$PUID:$PGID" /app/config
 chown -R "$PUID:$PGID" /workspace
-chown -R "$PUID:$PGID" "$USER_HOME"
 
 # Set environment for runtime user
 export HOME="$USER_HOME"

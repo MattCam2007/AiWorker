@@ -1278,6 +1278,67 @@ body::after {
   }
 }
 
+/* === Mobile Toolbar === */
+#mobile-toolbar {
+  display: none;
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 1200;
+  background: rgba(17, 17, 17, 0.95);
+  border-top: 1px solid var(--td-border);
+  padding: 4px 4px;
+  gap: 4px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  white-space: nowrap;
+  flex-wrap: nowrap;
+  align-items: center;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+@media (max-width: 767px) {
+  #mobile-toolbar {
+    display: flex;
+  }
+
+  #main-content {
+    padding-bottom: 42px;
+  }
+}
+
+.mobile-toolbar-btn {
+  flex-shrink: 0;
+  min-width: 40px;
+  height: 34px;
+  padding: 0 8px;
+  font-family: var(--td-font-terminal);
+  font-size: 12px;
+  color: var(--td-text);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--td-border);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.1s ease, border-color 0.1s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mobile-toolbar-btn:active,
+.mobile-toolbar-btn.active {
+  background: rgba(10, 189, 198, 0.25);
+  border-color: var(--td-cyan);
+  color: var(--td-cyan);
+}
+
+.mobile-toolbar-btn.ctrl-active {
+  background: rgba(10, 189, 198, 0.3);
+  border-color: var(--td-cyan);
+  color: var(--td-cyan);
+  box-shadow: 0 0 6px rgba(10, 189, 198, 0.4);
+}
+
 /* === Copy Toast === */
 .td-copy-toast {
   position: fixed;
