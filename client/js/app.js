@@ -912,19 +912,30 @@
 
     if (!activeConn) return;
 
-    // Flush any pending IME composition before sending toolbar input.
-    // Mobile keyboards hold text in a composition buffer (uncommitted)
-    // until a space/punctuation is typed. Without flushing, toolbar keys
-    // like Tab arrive at the PTY before the composed text, so readline
-    // sees an empty prefix instead of what's visibly on screen.
     var term = activeConn._terminal;
+    var ws = activeConn._ws;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+    // Flush any pending IME composition before sending toolbar input.
+    // Mobile keyboards hold text in a composition buffer (uncommitted).
+    // We read the textarea directly and send it ourselves, then clear it.
+    // This avoids two bugs with the old synthetic compositionend approach:
+    //   1. Race: compositionend is processed async (setTimeout) inside
+    //      xterm.js, so the toolbar key (\t) would beat the composed text
+    //      to the PTY — readline sees Tab with an empty prefix.
+    //   2. Double-commit: the synthetic event doesn't clear the mobile
+    //      keyboard's IME state, so it re-commits the buffer on refocus.
     if (term && term.textarea) {
-      term.textarea.dispatchEvent(new CompositionEvent('compositionend'));
+      var pending = term.textarea.value;
+      if (pending) {
+        ws.send(JSON.stringify({ type: 'input', data: pending }));
+        term.textarea.value = '';
+        // Reset xterm.js internal composition state (no text left to process)
+        term.textarea.dispatchEvent(new CompositionEvent('compositionend'));
+      }
     }
 
-    if (activeConn._ws && activeConn._ws.readyState === WebSocket.OPEN) {
-      activeConn._ws.send(JSON.stringify({ type: 'input', data: data }));
-    }
+    ws.send(JSON.stringify({ type: 'input', data: data }));
 
     activeConn.focus();
   };
