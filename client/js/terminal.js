@@ -49,6 +49,19 @@
     // Open terminal in element
     this._terminal.open(el);
 
+    // Fix mobile input duplication (xterm.js race condition).
+    // On mobile, keydown(229) triggers _handleAnyTextareaChanges which
+    // diffs the textarea via setTimeout. This races with _inputEvent
+    // (fired by the DOM input event), causing duplicate or garbled text.
+    // Mobile doesn't need the textarea-diff fallback — composition events
+    // and _inputEvent handle all input correctly.
+    if (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+      var ch = this._terminal._compositionHelper;
+      if (ch && ch._handleAnyTextareaChanges) {
+        ch._handleAnyTextareaChanges = function () {};
+      }
+    }
+
     // Defer fit() until the browser has completed a full rendering cycle.
     // A single requestAnimationFrame is NOT enough — rAF fires BEFORE the
     // browser paints, so the container geometry (flex/grid heights) may not
@@ -148,6 +161,12 @@
     // Wire terminal input to WS
     this._terminal.onData(function (data) {
       if (self._ws && self._ws.readyState === WebSocket.OPEN) {
+        // Filter out Device Attributes responses that xterm.js auto-generates
+        // in reply to DA queries from tmux (\x1b[c / \x1b[>c).  On mobile,
+        // backgrounding and resuming the browser causes a reconnect; tmux
+        // re-queries DA and the response (e.g. \x1b[>0;276;0c) arrives when
+        // tmux isn't expecting it, so it leaks as visible text in the shell.
+        if (/^\x1b\[[\?>][\d;]*c$/.test(data)) return;
         self._ws.send(JSON.stringify({ type: 'input', data: data }));
       }
     });

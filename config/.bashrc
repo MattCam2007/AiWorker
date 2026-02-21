@@ -36,7 +36,13 @@ _td_set_prompt() {
     fi
   fi
 
-  PS1="${_td_title}\[\e[36m\]\u\[\e[37m\]@\[\e[32m\]\h\[\e[0m\]: \[\e[36m\]\w\[\e[0m\] ${git_info}\[\e[33m\]%\[\e[0m\] "
+  # On narrow terminals (phones), put % on its own line for more typing room
+  local nl=""
+  if (( COLUMNS < 80 )); then
+    nl="\n"
+  fi
+
+  PS1="${_td_title}\[\e[36m\]\u\[\e[37m\]@\[\e[32m\]\h\[\e[0m\]: \[\e[36m\]\w\[\e[0m\] ${git_info}${nl}\[\e[33m\]%\[\e[0m\] "
 }
 PROMPT_COMMAND='_td_set_prompt'
 
