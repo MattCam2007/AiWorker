@@ -9,7 +9,9 @@
     this.id = noteConfig.id;
     this.config = {
       name: noteConfig.name,
-      file: noteConfig.file
+      file: noteConfig.file,
+      headerBg: null,
+      headerColor: null
     };
     this.type = 'note';
     this._easyMDE = null;

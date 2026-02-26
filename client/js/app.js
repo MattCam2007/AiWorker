@@ -1101,8 +1101,12 @@
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: name })
     })
-      .then(function (res) { return res.json(); })
+      .then(function (res) {
+        if (!res.ok) throw new Error('Server returned ' + res.status);
+        return res.json();
+      })
       .then(function (note) {
+        if (!note || !note.id) throw new Error('Invalid note response');
         var panel = new ns.NotePanel(note);
         panel._onDirtyChange = function () {
           self._syncTerminalList();
@@ -1112,6 +1116,9 @@
         self._updateEmptyState();
         self._syncTerminalList();
         return note;
+      })
+      .catch(function (err) {
+        console.error('[app] createNote failed:', err);
       });
   };
 

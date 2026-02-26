@@ -1299,6 +1299,22 @@ body::after {
     height: 40px;
     min-height: 40px;
   }
+
+  /* --- Note panel: mobile toolbar and type selector --- */
+  .note-panel-wrapper .editor-toolbar {
+    flex-wrap: wrap;
+    overflow-x: auto;
+  }
+
+  .note-panel-wrapper .editor-toolbar button {
+    width: 28px;
+    height: 28px;
+  }
+
+  .ephemeral-type-btn {
+    padding: 10px 0;
+    font-size: 13px;
+  }
 }
 
 /* === Mobile Toolbar === */
@@ -1445,6 +1461,8 @@ body::after {
   border-right: none;
   opacity: 1;
   padding: 2px 6px;
+  flex-wrap: wrap;
+  overflow: hidden;
 }
 
 .note-panel-wrapper .editor-toolbar button {

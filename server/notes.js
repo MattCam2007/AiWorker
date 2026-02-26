@@ -43,7 +43,12 @@ class NoteManager {
       log.error('[notes] failed to read config for save:', err.message);
     }
     existing.notes = notes;
-    fs.writeFileSync(configPath, JSON.stringify(existing, null, 2));
+    try {
+      fs.writeFileSync(configPath, JSON.stringify(existing, null, 2));
+    } catch (err) {
+      log.error('[notes] failed to write config:', err.message);
+      return;
+    }
     // Update the in-memory config
     this._configManager._config.notes = notes;
   }
@@ -92,7 +97,12 @@ class NoteManager {
 
     this._ensureDir();
     var filePath = this._fullPath(note.file);
-    fs.writeFileSync(filePath, content);
+    try {
+      fs.writeFileSync(filePath, content);
+    } catch (err) {
+      log.error('[notes] failed to write note file:', err.message);
+      return null;
+    }
 
     var timestamp = new Date().toISOString();
     return { success: true, saved: timestamp };
