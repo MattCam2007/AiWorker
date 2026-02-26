@@ -5,6 +5,7 @@ const { ConfigManager } = require('./config');
 const { SessionManager } = require('./sessions');
 const { TerminalWSServer } = require('./websocket');
 const { listDirectory } = require('./filetree');
+const { getHistoryFilePath, createHistoryRoute } = require('./history');
 const log = require('./log');
 
 const MIME_TYPES = {
@@ -71,6 +72,9 @@ async function createApp(options = {}) {
   const configManager = new ConfigManager(configPath);
   const config = configManager.load();
 
+  const historyFilePath = getHistoryFilePath(config.settings.shell);
+  const historyRoute = createHistoryRoute(historyFilePath);
+
   const sessionManager = new SessionManager(config);
   await sessionManager.discoverSessions();
 
@@ -132,6 +136,11 @@ async function createApp(options = {}) {
       return;
     }
 
+    if (req.url === '/api/history' && req.method === 'GET') {
+      historyRoute(req, res);
+      return;
+    }
+
     // Static files
     serveStatic(req, res);
   });
@@ -141,6 +150,9 @@ async function createApp(options = {}) {
 
   sessionManager.on('sessionDied', () => { wsServer._broadcastSessions(); });
   sessionManager.startHealthCheck();
+
+  // Watch history file for changes and push updates to clients
+  wsServer.watchHistoryFile(historyFilePath);
 
   // Config hot-reload (settings/theme only)
   configManager.watch();

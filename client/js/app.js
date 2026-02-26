@@ -13,6 +13,7 @@
     this._controlWs = null;
     this._fileTree = null;
     this._terminalList = null;
+    this._commandPalette = null;
   }
 
   App.prototype.init = function () {
@@ -34,6 +35,7 @@
         self._wireSidebarToggle();
         self._wireOrientationChange();
         self._initMobileToolbar();
+        self._initCommandPalette();
         self._connectControl();
 
         return self._loadSessions();
@@ -142,6 +144,9 @@
           break;
         case 'activity':
           self._handleActivity(msg);
+          break;
+        case 'history_update':
+          self._handleHistoryUpdate(msg);
           break;
       }
     });
@@ -963,6 +968,66 @@
     ws.send(JSON.stringify({ type: 'input', data: data }));
 
     activeConn.focus();
+  };
+
+  // --- Command Palette ---
+
+  App.prototype._initCommandPalette = function () {
+    var container = document.getElementById('command-palette');
+    if (!container || !ns.CommandPalette) return;
+
+    var self = this;
+    this._commandPalette = new ns.CommandPalette(container);
+
+    this._commandPalette.onSelect = function (command) {
+      self._sendToActiveTerminal(command + '\n');
+    };
+
+    // Mobile: swipe-right from left edge opens command palette
+    this._initCommandPaletteSwipe();
+  };
+
+  App.prototype._handleHistoryUpdate = function (msg) {
+    if (this._commandPalette && msg.history) {
+      this._commandPalette.updateHistory(msg.history);
+    }
+  };
+
+  App.prototype._initCommandPaletteSwipe = function () {
+    var self = this;
+    var startX = 0;
+    var startY = 0;
+    var tracking = false;
+
+    document.addEventListener('touchstart', function (e) {
+      var touch = e.touches[0];
+      // Only track swipes starting from the right edge (last 30px)
+      if (touch.clientX > window.innerWidth - 30) {
+        startX = touch.clientX;
+        startY = touch.clientY;
+        tracking = true;
+      }
+    }, { passive: true });
+
+    document.addEventListener('touchmove', function (e) {
+      if (!tracking) return;
+
+      var touch = e.touches[0];
+      var dx = touch.clientX - startX;
+      var dy = Math.abs(touch.clientY - startY);
+
+      // Require horizontal swipe to the left, minimum 50px, more horizontal than vertical
+      if (dx < -50 && dy < Math.abs(dx)) {
+        tracking = false;
+        if (self._commandPalette) {
+          self._commandPalette.open();
+        }
+      }
+    }, { passive: true });
+
+    document.addEventListener('touchend', function () {
+      tracking = false;
+    }, { passive: true });
   };
 
   ns.App = App;

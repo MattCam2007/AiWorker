@@ -1,5 +1,7 @@
+const fs = require('fs');
 const { WebSocketServer } = require('ws');
 const { ActivityTracker } = require('./activity');
+const { readHistory } = require('./history');
 const log = require('./log');
 
 const MAX_TERM_COLS = 500;
@@ -383,10 +385,50 @@ class TerminalWSServer {
     });
   }
 
+  // --- History File Watcher ---
+
+  /**
+   * Watch a history file for changes and broadcast updates to control clients.
+   * @param {string} historyFilePath - Absolute path to the history file
+   */
+  watchHistoryFile(historyFilePath) {
+    if (this._historyWatcher) return;
+    this._historyDebounceTimer = null;
+
+    try {
+      this._historyWatcher = fs.watch(historyFilePath, () => {
+        clearTimeout(this._historyDebounceTimer);
+        this._historyDebounceTimer = setTimeout(() => {
+          try {
+            const history = readHistory(historyFilePath);
+            this._sendToControl({ type: 'history_update', history });
+          } catch (err) {
+            log.debug('[history] failed to read history file:', err.message);
+          }
+        }, 500);
+      });
+
+      this._historyWatcher.on('error', (err) => {
+        log.debug('[history] watcher error:', err.message);
+      });
+    } catch (err) {
+      log.debug('[history] failed to watch history file:', err.message);
+    }
+  }
+
+  stopWatchingHistory() {
+    if (this._historyWatcher) {
+      this._historyWatcher.close();
+      this._historyWatcher = null;
+    }
+    clearTimeout(this._historyDebounceTimer);
+  }
+
   // --- Cleanup ---
 
   closeAll() {
     this._activity.stopBroadcasting();
+    this.stopWatchingHistory();
 
     if (this._heartbeatInterval) {
       clearInterval(this._heartbeatInterval);
