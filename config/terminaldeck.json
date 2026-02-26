@@ -7,5 +7,18 @@
       "fontSize": 14
     },
     "shell": "/bin/bash"
+  },
+  "shortcuts": {
+    "global": [
+      { "name": "Git Pull", "command": "git pull", "aliases": ["gp", "pull"], "icon": "git-pull-request" },
+      { "name": "Git Push", "command": "git push", "aliases": ["gpush", "push"] },
+      { "name": "Docker Compose Up", "command": "docker compose up -d", "aliases": ["dcu", "up"] }
+    ],
+    "projects": {
+      "/workspace/terminaldeck": [
+        { "name": "Dev Server", "command": "npm run dev", "aliases": ["dev", "serve"] },
+        { "name": "Run Tests", "command": "npm test", "aliases": ["test", "t"] }
+      ]
+    }
   }
 }

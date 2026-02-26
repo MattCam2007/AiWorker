@@ -99,6 +99,16 @@ async function createApp(options = {}) {
       return;
     }
 
+    if (req.method === 'GET' && req.url.startsWith('/api/shortcuts')) {
+      const url = new URL(req.url, 'http://localhost');
+      const cwd = url.searchParams.get('cwd') || undefined;
+      const shortcuts = configManager.getShortcuts(cwd);
+      setSecurityHeaders(res);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(shortcuts));
+      return;
+    }
+
     if (req.method === 'GET' && req.url.startsWith('/api/files')) {
       const url = new URL(req.url, 'http://localhost');
       const dirPath = url.searchParams.get('path') || '.';

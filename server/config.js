@@ -45,6 +45,40 @@ class ConfigManager extends EventEmitter {
     return this._config;
   }
 
+  getShortcuts(cwd) {
+    const config = this._config;
+    if (!config || !config.shortcuts) {
+      return [];
+    }
+
+    const { global: globalShortcuts, projects } = config.shortcuts;
+    const result = [];
+
+    // Find matching project shortcuts (use longest path match)
+    if (cwd && projects) {
+      let bestMatch = '';
+      for (const projPath of Object.keys(projects)) {
+        if ((cwd === projPath || cwd.startsWith(projPath + '/')) && projPath.length > bestMatch.length) {
+          bestMatch = projPath;
+        }
+      }
+      if (bestMatch && projects[bestMatch]) {
+        for (const shortcut of projects[bestMatch]) {
+          result.push({ ...shortcut, source: 'project' });
+        }
+      }
+    }
+
+    // Append global shortcuts
+    if (globalShortcuts) {
+      for (const shortcut of globalShortcuts) {
+        result.push({ ...shortcut, source: 'global' });
+      }
+    }
+
+    return result;
+  }
+
   watch() {
     if (this._watcher) return;
 
@@ -100,6 +134,58 @@ class ConfigManager extends EventEmitter {
         throw new Error('settings.shell must be a string');
       }
     }
+
+    // Validate shortcuts section
+    if (config.shortcuts !== undefined) {
+      if (typeof config.shortcuts !== 'object' || config.shortcuts === null || Array.isArray(config.shortcuts)) {
+        throw new Error('"shortcuts" must be an object');
+      }
+      if (config.shortcuts.global !== undefined && !Array.isArray(config.shortcuts.global)) {
+        throw new Error('shortcuts.global must be an array');
+      }
+      if (config.shortcuts.projects !== undefined) {
+        if (typeof config.shortcuts.projects !== 'object' || config.shortcuts.projects === null || Array.isArray(config.shortcuts.projects)) {
+          throw new Error('shortcuts.projects must be an object');
+        }
+        for (const [projPath, projShortcuts] of Object.entries(config.shortcuts.projects)) {
+          if (!Array.isArray(projShortcuts)) {
+            throw new Error(`project "${projPath}" shortcuts must be an array`);
+          }
+          projShortcuts.forEach((s) => this._validateShortcut(s));
+        }
+      }
+      if (config.shortcuts.global) {
+        config.shortcuts.global.forEach((s) => this._validateShortcut(s));
+      }
+    }
+  }
+
+  _validateShortcut(shortcut) {
+    if (!shortcut.name) {
+      throw new Error('shortcut must have a "name" field');
+    }
+    if (typeof shortcut.name !== 'string') {
+      throw new Error('shortcut "name" must be a string');
+    }
+    if (!shortcut.command) {
+      throw new Error('shortcut must have a "command" field');
+    }
+    if (typeof shortcut.command !== 'string') {
+      throw new Error('shortcut "command" must be a string');
+    }
+    if (shortcut.aliases !== undefined) {
+      if (!Array.isArray(shortcut.aliases)) {
+        throw new Error('shortcut "aliases" must be an array');
+      }
+      for (const alias of shortcut.aliases) {
+        if (typeof alias !== 'string') {
+          throw new Error('each alias must be a string');
+        }
+      }
+    }
+    if (shortcut.icon !== undefined && typeof shortcut.icon !== 'string') {
+      throw new Error('shortcut "icon" must be a string');
+    }
   }
 
   _applyDefaults(config) {
@@ -116,7 +202,12 @@ class ConfigManager extends EventEmitter {
       theme
     };
 
-    return { settings: mergedSettings };
+    const shortcuts = {
+      global: (config.shortcuts && config.shortcuts.global) || [],
+      projects: (config.shortcuts && config.shortcuts.projects) || {}
+    };
+
+    return { settings: mergedSettings, shortcuts };
   }
 }
 
