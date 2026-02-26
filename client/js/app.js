@@ -916,22 +916,47 @@
     var ws = activeConn._ws;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
-    // Flush any pending IME composition before sending toolbar input.
-    // Mobile keyboards hold text in a composition buffer (uncommitted).
-    // We read the textarea directly and send it ourselves, then clear it.
-    // This avoids two bugs with the old synthetic compositionend approach:
-    //   1. Race: compositionend is processed async (setTimeout) inside
-    //      xterm.js, so the toolbar key (\t) would beat the composed text
-    //      to the PTY — readline sees Tab with an empty prefix.
-    //   2. Double-commit: the synthetic event doesn't clear the mobile
-    //      keyboard's IME state, so it re-commits the buffer on refocus.
-    if (term && term.textarea) {
-      var pending = term.textarea.value;
+    // Flush pending IME composition text before sending toolbar data.
+    //
+    // On Android Chrome, every character goes through IME composition.
+    // Characters accumulate in xterm.js's textarea and are NOT sent to
+    // the PTY until compositionend fires (space, punctuation, or word
+    // accept).  Toolbar keys sent directly via WebSocket bypass this
+    // buffer, so bash doesn't see the uncommitted characters — e.g.
+    // if the user typed "ls /hom" and "hom" is still in the IME buffer,
+    // bash only has "ls /" when '\t' arrives, finds ambiguous matches,
+    // and single-tab completion fails.
+    //
+    // Fix: detect an active composition, send the pending text to the
+    // PTY first, then reset xterm.js's composition state so it doesn't
+    // double-send when the browser eventually fires compositionend.
+    var textarea = term && term.textarea;
+    var ch = term && (term._compositionHelper
+      || (term._core && term._core._compositionHelper));
+
+    if (ch && ch.isComposing && textarea && textarea.value) {
+      // Extract only the unsent composition text.
+      // _compositionPosition.start marks where the composition began
+      // in the textarea; _dataAlreadySent tracks any chars xterm.js
+      // already forwarded during the composition.
+      var start = ch._compositionPosition ? ch._compositionPosition.start : 0;
+      var alreadySent = ch._dataAlreadySent ? ch._dataAlreadySent.length : 0;
+      var pending = textarea.value.substring(start + alreadySent);
+
       if (pending) {
         ws.send(JSON.stringify({ type: 'input', data: pending }));
-        term.textarea.value = '';
-        // Reset xterm.js internal composition state (no text left to process)
-        term.textarea.dispatchEvent(new CompositionEvent('compositionend'));
+      }
+
+      // Reset composition state so xterm.js doesn't re-send the same
+      // text when compositionend eventually fires from the browser.
+      textarea.value = '';
+      ch._isComposing = false;
+      ch._isSendingComposition = false;
+      ch._dataAlreadySent = '';
+      ch._compositionPosition = { start: 0, end: 0 };
+      if (ch._compositionView) {
+        ch._compositionView.classList.remove('active');
+        ch._compositionView.textContent = '';
       }
     }
 

@@ -49,18 +49,6 @@
     // Open terminal in element
     this._terminal.open(el);
 
-    // Fix mobile input duplication (xterm.js race condition).
-    // On mobile, keydown(229) triggers _handleAnyTextareaChanges which
-    // diffs the textarea via setTimeout. This races with _inputEvent
-    // (fired by the DOM input event), causing duplicate or garbled text.
-    // Mobile doesn't need the textarea-diff fallback — composition events
-    // and _inputEvent handle all input correctly.
-    if (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
-      var ch = this._terminal._compositionHelper;
-      if (ch && ch._handleAnyTextareaChanges) {
-        ch._handleAnyTextareaChanges = function () {};
-      }
-    }
 
     // Defer fit() until the browser has completed a full rendering cycle.
     // A single requestAnimationFrame is NOT enough — rAF fires BEFORE the
@@ -309,54 +297,33 @@
   };
 
   /**
-   * Detect and fix rendering issues (blank screen, dimension mismatch,
-   * stale canvas).  Returns true if a correction was applied.
+   * Force a full display refresh — fixes TUI corruption (common with
+   * apps like Claude Code).  Repaints all xterm.js rows on the client,
+   * then bounces the PTY size so tmux sends a fresh redraw.
    */
-  TerminalConnection.prototype.healthCheck = function () {
-    if (!this._terminal || !this._fitAddon || !this._element) return false;
+  TerminalConnection.prototype.refresh = function () {
+    if (!this._terminal || !this._fitAddon) return;
 
-    var corrected = false;
+    // 1. Force xterm.js to repaint every visible row
+    this._terminal.refresh(0, this._terminal.rows - 1);
 
-    // 1. Container must have real dimensions
-    var rect = this._element.getBoundingClientRect();
-    if (rect.width < 1 || rect.height < 1) return false; // hidden — skip
-
-    // 2. Check dimension mismatch: proposed size vs current terminal size
-    var proposed = this._fitAddon.proposeDimensions();
-    if (proposed) {
-      var colDrift = Math.abs(this._terminal.cols - proposed.cols);
-      var rowDrift = Math.abs(this._terminal.rows - proposed.rows);
-      if (colDrift > 0 || rowDrift > 0) {
-        this._fitAddon.fit();
-        this._sendResize();
-        corrected = true;
-      }
+    // 2. Bounce the PTY size to trigger SIGWINCH → tmux redraw.
+    //    Shrink by 1 col, then restore after the server's 100ms throttle.
+    var dims = this._fitAddon.proposeDimensions();
+    if (dims && this._ws && this._ws.readyState === WebSocket.OPEN) {
+      this._ws.send(JSON.stringify({
+        type: 'resize',
+        cols: Math.max(1, dims.cols - 1),
+        rows: dims.rows
+      }));
+      var self = this;
+      setTimeout(function () {
+        if (self._fitAddon) {
+          self._fitAddon.fit();
+          self._sendResize();
+        }
+      }, 150);
     }
-
-    // 3. Check canvas health — xterm renders to a canvas; if it has zero
-    //    dimensions or is missing, force a full refresh cycle
-    var canvas = this._element.querySelector('canvas');
-    if (canvas) {
-      if (canvas.width < 1 || canvas.height < 1) {
-        this._fitAddon.fit();
-        this._sendResize();
-        corrected = true;
-      }
-    }
-
-    // 4. Force a full repaint from the terminal buffer.  This is cheap
-    //    (just re-draws existing content) and fixes canvas rendering that
-    //    went blank due to GPU context loss or rapid output overflow.
-    if (corrected) {
-      this._terminal.refresh(0, this._terminal.rows - 1);
-      // Clear the glyph texture atlas — fixes corrupted glyphs after
-      // GPU context loss or long-running sessions
-      if (typeof this._terminal.clearTextureAtlas === 'function') {
-        this._terminal.clearTextureAtlas();
-      }
-    }
-
-    return corrected;
   };
 
   TerminalConnection.prototype.focus = function () {

@@ -738,6 +738,28 @@ body::after {
   background: rgba(10, 189, 198, 0.15);
 }
 
+/* === Cell Header Refresh Button === */
+.cell-header-refresh {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--td-text-dim);
+  background: transparent;
+  border: none;
+  border-radius: 2px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+  margin-right: 2px;
+}
+
+.cell-header-refresh:hover {
+  color: var(--td-cyan);
+  background: rgba(10, 189, 198, 0.15);
+}
+
 /* === Cell Header Supersize Button === */
 .cell-header-supersize,
 .cell-header-exit-supersize {
@@ -1180,6 +1202,7 @@ body::after {
   }
 
   .cell-header-edit,
+  .cell-header-refresh,
   .cell-header-supersize,
   .cell-header-exit-supersize,
   .cell-header-minimize,
