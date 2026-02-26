@@ -6,7 +6,8 @@
       "fontFamily": "Fira Code, monospace",
       "fontSize": 14
     },
-    "shell": "/bin/bash"
+    "shell": "/bin/bash",
+    "promptPattern": "\\$\\s*$"
   },
   "shortcuts": {
     "global": [

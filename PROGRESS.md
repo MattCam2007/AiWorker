@@ -3,7 +3,7 @@
 ## Feature: Task Shortcuts (Team 2)
 
 **Branch:** `feature/task-shortcuts`
-**Status:** Complete
+**Status:** Complete — Merged to main
 
 ### What was built
 
@@ -17,48 +17,69 @@ A configurable shortcut system with aliases, defined in `config/terminaldeck.jso
    - `_applyDefaults()`: defaults shortcuts to `{ global: [], projects: {} }` when missing
    - `getShortcuts(cwd)`: new method that merges project shortcuts (longest cwd match) + global shortcuts, project shortcuts appear first, each tagged with `source: 'project'` or `source: 'global'`
 
-2. **`server/index.js`** — New `GET /api/shortcuts` endpoint:
-   - Accepts optional `?cwd=/some/path` query param
-   - Returns JSON array of merged shortcuts
-   - Uses same routing pattern as existing endpoints
+2. **`server/index.js`** — New `GET /api/shortcuts` endpoint
+3. **`config/terminaldeck.json`** — Added example shortcuts section
 
-3. **`config/terminaldeck.json`** — Added example shortcuts section with global and project shortcuts
-
-### Tests (34 new tests, all passing)
-
-- `server/config.test.shortcuts.js` (26 tests): parsing, defaults, validation (13 error cases), getShortcuts merging logic
-- `server/index.test.shortcuts.js` (8 tests): API endpoint with cwd matching, empty config, security headers, response structure
-- All 12 existing `server/config.test.js` tests still pass (46 total)
+### Tests: 34 new tests, all passing
 
 ---
 
 ## Command Palette (Team 1)
 
 **Branch:** `feature/command-palette`
-**Status:** Complete
+**Status:** Complete — Merged to main
 
 ### What was built
 A slide-out command palette panel that shows searchable, scrollable command history.
 
 ### Backend
-- **`server/history.js`** — New module with `parseHistory()`, `getHistoryFilePath()`, `readHistory()`, and `createHistoryRoute()` functions. Parses `~/.bash_history` or `~/.zsh_history` (based on configured shell), deduplicates entries, and returns most-recent-first. Handles missing/malformed files gracefully.
-- **`server/index.js`** — Added `GET /api/history` route using the same `if` block pattern as existing routes. Reads the history file path from `config.settings.shell`.
-- **`server/websocket.js`** — Added `watchHistoryFile()` method with 500ms debounced `fs.watch()` that broadcasts `{ type: 'history_update', history: [...] }` to control clients when the history file changes. Cleanup handled in `closeAll()`.
+- **`server/history.js`** — New module: `parseHistory()`, `getHistoryFilePath()`, `readHistory()`, `createHistoryRoute()`
+- **`server/index.js`** — Added `GET /api/history` route
+- **`server/websocket.js`** — Added `watchHistoryFile()` with debounced `fs.watch()`, broadcasts `history_update`
 
 ### Frontend
-- **`client/js/command-palette.js`** — New IIFE module (`window.TerminalDeck.CommandPalette`). Fetches `/api/history` on open, uses fuse.js for client-side fuzzy search, renders scrollable list, fires `onSelect` callback when a command is clicked.
-- **`client/js/app.js`** — Wired up `_initCommandPalette()` in init chain. Handles `history_update` WebSocket messages to live-update the palette. Added swipe-left gesture from right edge for mobile. Selected commands are sent to the active terminal via `_sendToActiveTerminal(command + '\n')`.
-- **`client/index.html`** — Added command palette HTML structure, fuse.min.js vendor script, and command-palette.js script tag.
-- **`client/css/style.css`** — Added `.command-palette`, `.cp-header`, `.cp-search-input`, `.cp-close`, `.cp-list`, `.cp-item`, `.cp-backdrop` styles with slide-out transform transition, mobile responsive overrides.
-- **`client/vendor/fuse.min.js`** — Copied from `node_modules/fuse.js/dist/fuse.min.js`.
+- **`client/js/command-palette.js`** — New IIFE module with fuse.js fuzzy search
+- **`client/js/app.js`** — Wired palette init, history_update handler, swipe gesture
+- **`client/index.html`** — Added palette HTML, fuse.min.js, command-palette.js
+- **`client/css/style.css`** — Added palette styles with slide-out transition
+- **`client/vendor/fuse.min.js`** — fuse.js UMD bundle
 
-### Tests
-- **`server/history.test.js`** — 19 tests: parseHistory (8), getHistoryFilePath (4), readHistory (4), /api/history endpoint (3)
-- **`client/js/command-palette.test.js`** — 18 tests: namespace, open/close/toggle, loadHistory, search, selectItem, keyboard shortcuts (Ctrl+K, Cmd+K, Escape), close button, backdrop click, updateHistory
+### Tests: 37 new tests, all passing
 
-### Keyboard/Gesture Bindings
-- **Desktop:** `Ctrl+K` (or `Cmd+K` on Mac) toggles palette
-- **Mobile:** Swipe left from right edge opens palette
-- **Escape** closes palette
-- **Backdrop click** closes palette
-- **Close button** closes palette
+---
+
+## Notifications (Team 3)
+
+**Branch:** `feature/notifications`
+**Status:** Complete — Merged to main
+
+### What was built
+Task completion notification system: audio ding, browser notifications, visual flash.
+
+### Backend
+- **`server/prompt-detector.js`** — PromptDetector class: per-terminal output tracking, 2s debounce, ANSI-stripping, configurable regex
+- **`server/config.js`** — Added `promptPattern` to defaults and validation
+- **`server/websocket.js`** — Integrated PromptDetector, broadcasts `task_complete`
+- **`server/index.js`** — Passes `configManager` to TerminalWSServer
+
+### Frontend
+- **`client/js/app.js`** — `_handleTaskComplete`, `_playDing` (Web Audio API 830Hz sine), `_flashTerminalCell`, `_toggleNotificationMute`, `_initNotifications`
+- **`client/css/style.css`** — Notification toggle, task-complete-glow animation
+- **`client/index.html`** — Bell toggle button in header
+
+### Tests: 27 new tests, all passing
+
+---
+
+## Merge Log
+
+1. `feature/task-shortcuts` → `main`: Fast-forward (no conflicts)
+2. `feature/command-palette` → `main`: Conflict in PROGRESS.md only (resolved)
+3. `feature/notifications` → `main`: Conflicts in PROGRESS.md, config/terminaldeck.json, server/websocket.js, client/js/app.js (all resolved — kept both features' additions)
+
+## Final Summary
+
+- **3 features implemented**: Task Shortcuts, Command Palette, Notifications
+- **98 new tests** across all features
+- **Files changed**: 18 files modified/created
+- **No regressions** to existing functionality

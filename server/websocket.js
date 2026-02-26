@@ -2,6 +2,7 @@ const fs = require('fs');
 const { WebSocketServer } = require('ws');
 const { ActivityTracker } = require('./activity');
 const { readHistory } = require('./history');
+const { PromptDetector } = require('./prompt-detector');
 const log = require('./log');
 
 const MAX_TERM_COLS = 500;
@@ -23,6 +24,18 @@ class TerminalWSServer {
     // terminalId -> { pty, clients: Set<ws>, disconnectTimer, exited }
     this._terminals = new Map();
     this._activity = new ActivityTracker();
+
+    // Prompt detection for task completion notifications
+    const promptPattern = (options.configManager && options.configManager.getConfig())
+      ? options.configManager.getConfig().settings.promptPattern
+      : '\\$\\s*$';
+    this._promptDetector = new PromptDetector(promptPattern, (terminalId) => {
+      this._sendToControl({
+        type: 'task_complete',
+        terminalId,
+        timestamp: new Date().toISOString()
+      });
+    });
 
     // Control channel clients
     this._controlClients = new Set();
@@ -201,6 +214,7 @@ class TerminalWSServer {
 
     pty.onData((data) => {
       this._activity.recordOutput(terminalId);
+      this._promptDetector.recordOutput(terminalId, data);
       const msg = JSON.stringify({ type: 'output', data });
       for (const client of terminal.clients) {
         if (client.readyState === client.OPEN) {
@@ -263,6 +277,7 @@ class TerminalWSServer {
         terminal.outputBuffer = '';
         this._terminals.delete(terminalId);
         this._activity.removeTerminal(terminalId);
+        this._promptDetector.removeTerminal(terminalId);
       }, 5000);
     });
   }
@@ -372,6 +387,7 @@ class TerminalWSServer {
           terminal.outputBuffer = '';
           this._terminals.delete(terminalId);
           this._activity.removeTerminal(terminalId);
+          this._promptDetector.removeTerminal(terminalId);
         }, PTY_GRACE_PERIOD);
       }
     });
