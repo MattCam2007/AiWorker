@@ -100,6 +100,28 @@ class ConfigManager extends EventEmitter {
         throw new Error('settings.shell must be a string');
       }
     }
+    // Validate notes section
+    if (config.notes !== undefined) {
+      if (!Array.isArray(config.notes)) {
+        throw new Error('"notes" must be an array');
+      }
+      const noteIds = new Set();
+      for (const note of config.notes) {
+        if (!note.id || typeof note.id !== 'string') {
+          throw new Error('Each note must have a string "id"');
+        }
+        if (!note.name || typeof note.name !== 'string') {
+          throw new Error('Each note must have a string "name"');
+        }
+        if (!note.file || typeof note.file !== 'string') {
+          throw new Error('Each note must have a string "file"');
+        }
+        if (noteIds.has(note.id)) {
+          throw new Error('Duplicate note id: ' + note.id);
+        }
+        noteIds.add(note.id);
+      }
+    }
   }
 
   _applyDefaults(config) {
@@ -116,7 +138,11 @@ class ConfigManager extends EventEmitter {
       theme
     };
 
-    return { settings: mergedSettings };
+    const result = { settings: mergedSettings };
+    if (config.notes) {
+      result.notes = config.notes;
+    }
+    return result;
   }
 }
 

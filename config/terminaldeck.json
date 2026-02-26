@@ -7,5 +7,12 @@
       "fontSize": 14
     },
     "shell": "/bin/bash"
-  }
+  },
+  "notes": [
+    {
+      "id": "scratch",
+      "name": "Scratchpad",
+      "file": "scratch.md"
+    }
+  ]
 }
