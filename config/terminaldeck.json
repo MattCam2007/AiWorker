@@ -21,5 +21,12 @@
         { "name": "Run Tests", "command": "npm test", "aliases": ["test", "t"] }
       ]
     }
-  }
+  },
+  "notes": [
+    {
+      "id": "scratch",
+      "name": "Scratchpad",
+      "file": "scratch.md"
+    }
+  ]
 }

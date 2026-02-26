@@ -162,6 +162,29 @@ class ConfigManager extends EventEmitter {
         config.shortcuts.global.forEach((s) => this._validateShortcut(s));
       }
     }
+
+    // Validate notes section
+    if (config.notes !== undefined) {
+      if (!Array.isArray(config.notes)) {
+        throw new Error('"notes" must be an array');
+      }
+      const noteIds = new Set();
+      for (const note of config.notes) {
+        if (!note.id || typeof note.id !== 'string') {
+          throw new Error('Each note must have a string "id"');
+        }
+        if (!note.name || typeof note.name !== 'string') {
+          throw new Error('Each note must have a string "name"');
+        }
+        if (!note.file || typeof note.file !== 'string') {
+          throw new Error('Each note must have a string "file"');
+        }
+        if (noteIds.has(note.id)) {
+          throw new Error('Duplicate note id: ' + note.id);
+        }
+        noteIds.add(note.id);
+      }
+    }
   }
 
   _validateShortcut(shortcut) {
@@ -211,7 +234,11 @@ class ConfigManager extends EventEmitter {
       projects: (config.shortcuts && config.shortcuts.projects) || {}
     };
 
-    return { settings: mergedSettings, shortcuts };
+    const result = { settings: mergedSettings, shortcuts };
+    if (config.notes) {
+      result.notes = config.notes;
+    }
+    return result;
   }
 }
 

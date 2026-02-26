@@ -6,6 +6,7 @@ const { SessionManager } = require('./sessions');
 const { TerminalWSServer } = require('./websocket');
 const { listDirectory } = require('./filetree');
 const { getHistoryFilePath, createHistoryRoute } = require('./history');
+const { NoteManager } = require('./notes');
 const log = require('./log');
 
 const MIME_TYPES = {
@@ -23,6 +24,15 @@ const MIME_TYPES = {
 };
 
 const CLIENT_DIR = path.join(__dirname, '..', 'client');
+
+function readBody(req) {
+  return new Promise(function (resolve, reject) {
+    var chunks = [];
+    req.on('data', function (chunk) { chunks.push(chunk); });
+    req.on('end', function () { resolve(Buffer.concat(chunks).toString()); });
+    req.on('error', reject);
+  });
+}
 
 function setSecurityHeaders(res) {
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -77,6 +87,8 @@ async function createApp(options = {}) {
 
   const sessionManager = new SessionManager(config);
   await sessionManager.discoverSessions();
+
+  const noteManager = new NoteManager(configManager);
 
   const server = http.createServer((req, res) => {
     // API routes
@@ -141,6 +153,114 @@ async function createApp(options = {}) {
       return;
     }
 
+    // --- Note API routes ---
+
+    if (req.url === '/api/notes' && req.method === 'GET') {
+      setSecurityHeaders(res);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(noteManager.listNotes()));
+      return;
+    }
+
+    if (req.url === '/api/notes' && req.method === 'POST') {
+      readBody(req).then(function (body) {
+        var data;
+        try { data = JSON.parse(body); } catch (e) {
+          setSecurityHeaders(res);
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Invalid JSON' }));
+          return;
+        }
+        if (!data.name || typeof data.name !== 'string') {
+          setSecurityHeaders(res);
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'name is required' }));
+          return;
+        }
+        var note = noteManager.createNote(data.name);
+        setSecurityHeaders(res);
+        res.writeHead(201, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(note));
+      }).catch(function (err) {
+        if (!res.headersSent) {
+          setSecurityHeaders(res);
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+      return;
+    }
+
+    // Match /api/notes/:id routes
+    var noteMatch = req.url.match(/^\/api\/notes\/([a-zA-Z0-9_-]+)(\?.*)?$/);
+    if (noteMatch) {
+      var noteId = noteMatch[1];
+
+      if (req.method === 'GET') {
+        var note = noteManager.getNote(noteId);
+        setSecurityHeaders(res);
+        if (!note) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Note not found' }));
+        } else {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(note));
+        }
+        return;
+      }
+
+      if (req.method === 'PUT') {
+        readBody(req).then(function (body) {
+          var data;
+          try { data = JSON.parse(body); } catch (e) {
+            setSecurityHeaders(res);
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Invalid JSON' }));
+            return;
+          }
+          if (typeof data.content !== 'string') {
+            setSecurityHeaders(res);
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'content is required' }));
+            return;
+          }
+          var result = noteManager.saveNote(noteId, data.content);
+          setSecurityHeaders(res);
+          if (!result) {
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Note not found' }));
+          } else {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(result));
+            // Broadcast note_saved to all control clients
+            wsServer.broadcastNoteSaved(noteId);
+          }
+        }).catch(function (err) {
+          if (!res.headersSent) {
+            setSecurityHeaders(res);
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: err.message }));
+          }
+        });
+        return;
+      }
+
+      if (req.method === 'DELETE') {
+        var url = new URL(req.url, 'http://localhost');
+        var deleteFile = url.searchParams.get('deleteFile') === 'true';
+        var deleteResult = noteManager.deleteNote(noteId, deleteFile);
+        setSecurityHeaders(res);
+        if (!deleteResult) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Note not found' }));
+        } else {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(deleteResult));
+        }
+        return;
+      }
+    }
+
     // Static files
     serveStatic(req, res);
   });
@@ -174,6 +294,7 @@ async function createApp(options = {}) {
     port: actualPort,
     configManager,
     sessionManager,
+    noteManager,
     wsServer,
     close() {
       return new Promise((resolve) => {

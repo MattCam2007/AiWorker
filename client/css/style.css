@@ -1299,6 +1299,22 @@ body::after {
     height: 40px;
     min-height: 40px;
   }
+
+  /* --- Note panel: mobile toolbar and type selector --- */
+  .note-panel-wrapper .editor-toolbar {
+    flex-wrap: wrap;
+    overflow-x: auto;
+  }
+
+  .note-panel-wrapper .editor-toolbar button {
+    width: 28px;
+    height: 28px;
+  }
+
+  .ephemeral-type-btn {
+    padding: 10px 0;
+    font-size: 13px;
+  }
 }
 
 /* === Mobile Toolbar === */
@@ -1566,5 +1582,232 @@ body::after {
 
 .cell-task-complete {
   animation: task-complete-glow 1s ease-out;
+}
+
+/* === Note Panel === */
+.note-panel-wrapper {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* === EasyMDE Dark Theme === */
+.note-panel-wrapper .EasyMDEContainer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--td-bg);
+  border: none;
+}
+
+.note-panel-wrapper .CodeMirror {
+  flex: 1;
+  background: var(--td-bg);
+  color: var(--td-text);
+  border: none;
+  border-radius: 0;
+  font-family: var(--td-font-terminal);
+  font-size: var(--td-font-size);
+}
+
+.note-panel-wrapper .CodeMirror-cursor {
+  border-left-color: var(--td-cyan);
+}
+
+.note-panel-wrapper .CodeMirror-selected {
+  background: rgba(10, 189, 198, 0.2);
+}
+
+.note-panel-wrapper .CodeMirror-focused .CodeMirror-selected {
+  background: rgba(10, 189, 198, 0.3);
+}
+
+.note-panel-wrapper .CodeMirror-line::selection,
+.note-panel-wrapper .CodeMirror-line > span::selection,
+.note-panel-wrapper .CodeMirror-line > span > span::selection {
+  background: rgba(10, 189, 198, 0.3);
+}
+
+.note-panel-wrapper .CodeMirror-gutters {
+  background: var(--td-surface);
+  border-right: 1px solid var(--td-border);
+}
+
+.note-panel-wrapper .CodeMirror-linenumber {
+  color: var(--td-text-dim);
+}
+
+/* Toolbar */
+.note-panel-wrapper .editor-toolbar {
+  background: var(--td-surface);
+  border-top: none;
+  border-bottom: 1px solid var(--td-border);
+  border-left: none;
+  border-right: none;
+  opacity: 1;
+  padding: 2px 6px;
+  flex-wrap: wrap;
+  overflow: hidden;
+}
+
+.note-panel-wrapper .editor-toolbar button {
+  color: var(--td-text-dim) !important;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  transition: all 0.15s ease;
+}
+
+.note-panel-wrapper .editor-toolbar button:hover {
+  background: rgba(10, 189, 198, 0.1);
+  border-color: var(--td-border);
+  color: var(--td-cyan) !important;
+}
+
+.note-panel-wrapper .editor-toolbar button.active {
+  background: rgba(10, 189, 198, 0.15);
+  border-color: var(--td-cyan);
+  color: var(--td-cyan) !important;
+}
+
+.note-panel-wrapper .editor-toolbar i.separator {
+  border-left-color: var(--td-border);
+  border-right-color: var(--td-border);
+}
+
+/* Preview */
+.note-panel-wrapper .editor-preview,
+.note-panel-wrapper .editor-preview-side {
+  background: var(--td-bg);
+  color: var(--td-text);
+  font-family: var(--td-font-ui);
+  font-size: 13px;
+  padding: 12px;
+}
+
+.note-panel-wrapper .editor-preview h1,
+.note-panel-wrapper .editor-preview h2,
+.note-panel-wrapper .editor-preview h3,
+.note-panel-wrapper .editor-preview-side h1,
+.note-panel-wrapper .editor-preview-side h2,
+.note-panel-wrapper .editor-preview-side h3 {
+  color: var(--td-cyan);
+  border-bottom-color: var(--td-border);
+}
+
+.note-panel-wrapper .editor-preview a,
+.note-panel-wrapper .editor-preview-side a {
+  color: var(--td-cyan);
+}
+
+.note-panel-wrapper .editor-preview code,
+.note-panel-wrapper .editor-preview-side code {
+  font-family: var(--td-font-terminal);
+  background: var(--td-surface);
+  color: var(--td-color);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.note-panel-wrapper .editor-preview pre,
+.note-panel-wrapper .editor-preview-side pre {
+  background: var(--td-surface);
+  border: 1px solid var(--td-border);
+  border-radius: 4px;
+  padding: 10px;
+}
+
+.note-panel-wrapper .editor-preview pre code,
+.note-panel-wrapper .editor-preview-side pre code {
+  background: transparent;
+  padding: 0;
+}
+
+.note-panel-wrapper .editor-preview blockquote,
+.note-panel-wrapper .editor-preview-side blockquote {
+  border-left-color: var(--td-cyan);
+  color: var(--td-text-dim);
+}
+
+.note-panel-wrapper .editor-preview table th,
+.note-panel-wrapper .editor-preview-side table th {
+  background: var(--td-surface);
+  border-color: var(--td-border);
+}
+
+.note-panel-wrapper .editor-preview table td,
+.note-panel-wrapper .editor-preview-side table td {
+  border-color: var(--td-border);
+}
+
+.note-panel-wrapper .editor-preview hr,
+.note-panel-wrapper .editor-preview-side hr {
+  border-color: var(--td-border);
+}
+
+/* Side-by-side border */
+.note-panel-wrapper .editor-preview-active-side {
+  border-left: 1px solid var(--td-border);
+}
+
+/* Scrollbar within CodeMirror */
+.note-panel-wrapper .CodeMirror-vscrollbar::-webkit-scrollbar,
+.note-panel-wrapper .CodeMirror-hscrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.note-panel-wrapper .CodeMirror-vscrollbar::-webkit-scrollbar-thumb,
+.note-panel-wrapper .CodeMirror-hscrollbar::-webkit-scrollbar-thumb {
+  background: var(--td-border);
+  border-radius: 3px;
+}
+
+/* === Create Dialog: Type Selector === */
+.ephemeral-type-row {
+  display: flex;
+  gap: 0;
+  margin-bottom: 12px;
+  border: 1px solid var(--td-border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.ephemeral-type-btn {
+  flex: 1;
+  padding: 6px 0;
+  font-family: var(--td-font-terminal);
+  font-size: 11px;
+  color: var(--td-text-dim);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.ephemeral-type-btn:first-child {
+  border-right: 1px solid var(--td-border);
+}
+
+.ephemeral-type-btn:hover {
+  color: var(--td-text);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.ephemeral-type-btn.ephemeral-type-active {
+  color: var(--td-cyan);
+  background: rgba(10, 189, 198, 0.12);
+}
+
+/* === Terminal List: Note Status Icon === */
+.tl-status-note {
+  width: auto;
+  height: auto;
+  background: none;
+  border-radius: 0;
+  font-size: 12px;
+  line-height: 1;
+  box-shadow: none;
 }
 

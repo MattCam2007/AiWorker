@@ -202,6 +202,10 @@ class TerminalWSServer {
     this._sendToControl({ type: 'config_reload', config });
   }
 
+  broadcastNoteSaved(noteId) {
+    this._sendToControl({ type: 'note_saved', noteId: noteId, timestamp: new Date().toISOString() });
+  }
+
   // --- PTY Lifecycle ---
 
   /**

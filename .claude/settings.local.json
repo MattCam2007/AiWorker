@@ -41,7 +41,8 @@
       "Bash(docker ps:*)",
       "Bash(node:)",
       "WebFetch(domain:raw.githubusercontent.com)",
-      "Bash(git checkout:*)"
+      "Bash(git checkout:*)",
+      "Bash(git merge:*)"
     ]
   }
 }
