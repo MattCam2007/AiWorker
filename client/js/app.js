@@ -15,6 +15,8 @@
     this._terminalList = null;
     this._commandPalette = null;
     this._notificationsMuted = false;
+    this._ctrlActive = false;
+    this._altActive = false;
   }
 
   App.prototype.init = function () {
@@ -908,20 +910,52 @@
 
   // --- Mobile Toolbar ---
 
+  // Deactivate the Ctrl modifier and remove visual highlight.
+  // Called from both toolbar click handler and TerminalConnection when
+  // a keyboard keystroke consumes the Ctrl state.
+  App.prototype._deactivateCtrl = function () {
+    this._ctrlActive = false;
+    var ctrlBtn = document.querySelector('#mobile-toolbar [data-key="ctrl"]');
+    if (ctrlBtn) ctrlBtn.classList.remove('ctrl-active');
+  };
+
+  App.prototype._deactivateAlt = function () {
+    this._altActive = false;
+    var altBtn = document.querySelector('#mobile-toolbar [data-key="alt"]');
+    if (altBtn) altBtn.classList.remove('ctrl-active');
+  };
+
   App.prototype._TOOLBAR_KEYS = {
-    'esc':   '\x1b',
-    'tab':   '\t',
-    'up':    '\x1b[A',
-    'down':  '\x1b[B',
-    'left':  '\x1b[D',
-    'right': '\x1b[C',
-    'pipe':  '|',
-    'dash':  '-',
-    'tilde': '~',
-    'slash': '/',
-    'colon': ':',
-    'pgup':  '\x1b[5~',
-    'pgdn':  '\x1b[6~'
+    'esc':         '\x1b',
+    'tab':         '\t',
+    'up':          '\x1b[A',
+    'down':        '\x1b[B',
+    'left':        '\x1b[D',
+    'right':       '\x1b[C',
+    'pipe':        '|',
+    'dash':        '-',
+    'tilde':       '~',
+    'slash':       '/',
+    'colon':       ':',
+    'semicolon':   ';',
+    'backslash':   '\\',
+    'singlequote': "'",
+    'doublequote': '"',
+    'bang':        '!',
+    'ampersand':   '&',
+    'dollar':      '$',
+    'lparen':      '(',
+    'rparen':      ')',
+    'lbracket':    '[',
+    'rbracket':    ']',
+    'lbrace':      '{',
+    'rbrace':      '}',
+    'lt':          '<',
+    'gt':          '>',
+    'pgup':        '\x1b[5~',
+    'pgdn':        '\x1b[6~',
+    'home':        '\x1b[H',
+    'end':         '\x1b[F'
   };
 
   App.prototype._initMobileToolbar = function () {
@@ -929,7 +963,6 @@
     if (!toolbar) return;
 
     var self = this;
-    var ctrlActive = false;
 
     // CRITICAL: Prevent focus theft.
     // Without this, tapping any button steals focus from xterm.js,
@@ -947,13 +980,20 @@
 
       // Handle Ctrl toggle
       if (key === 'ctrl') {
-        ctrlActive = !ctrlActive;
-        btn.classList.toggle('ctrl-active', ctrlActive);
+        self._ctrlActive = !self._ctrlActive;
+        btn.classList.toggle('ctrl-active', self._ctrlActive);
+        return;
+      }
+
+      // Handle Alt toggle
+      if (key === 'alt') {
+        self._altActive = !self._altActive;
+        btn.classList.toggle('ctrl-active', self._altActive);
         return;
       }
 
       var data;
-      if (ctrlActive) {
+      if (self._ctrlActive) {
         if (key.length === 1) {
           var code = key.toUpperCase().charCodeAt(0) - 64;
           if (code >= 1 && code <= 26) {
@@ -967,15 +1007,72 @@
           data = self._TOOLBAR_KEYS[key] || key;
         }
 
-        ctrlActive = false;
-        var ctrlBtn = toolbar.querySelector('[data-key="ctrl"]');
-        if (ctrlBtn) ctrlBtn.classList.remove('ctrl-active');
+        self._deactivateCtrl();
+      } else if (self._altActive) {
+        // Alt sends ESC prefix followed by the key
+        data = '\x1b' + (self._TOOLBAR_KEYS[key] || key);
+        self._deactivateAlt();
       } else {
         data = self._TOOLBAR_KEYS[key] || key;
       }
 
       self._sendToActiveTerminal(data);
     });
+
+    // --- Swipe up/down to cycle toolbar states ---
+    // States: 'collapsed' (handle only) -> 'normal' (2 rows) -> 'expanded' (4 rows)
+    // Swipe up promotes, swipe down demotes.
+    self._toolbarState = 'normal';
+
+    var handle = toolbar.querySelector('.mobile-toolbar-handle');
+    if (handle) {
+      var touchStartY = null;
+      var SWIPE_THRESHOLD = 30;
+
+      handle.addEventListener('touchstart', function (e) {
+        if (e.touches.length === 1) {
+          touchStartY = e.touches[0].clientY;
+        }
+      }, { passive: true });
+
+      handle.addEventListener('touchmove', function (e) {
+        if (touchStartY === null || e.touches.length !== 1) return;
+        var dy = touchStartY - e.touches[0].clientY;
+
+        if (dy > SWIPE_THRESHOLD) {
+          // Swiped up — promote
+          if (self._toolbarState === 'collapsed') {
+            self._setToolbarState('normal');
+          } else if (self._toolbarState === 'normal') {
+            self._setToolbarState('expanded');
+          }
+          touchStartY = null;
+        } else if (dy < -SWIPE_THRESHOLD) {
+          // Swiped down — demote
+          if (self._toolbarState === 'expanded') {
+            self._setToolbarState('normal');
+          } else if (self._toolbarState === 'normal') {
+            self._setToolbarState('collapsed');
+          }
+          touchStartY = null;
+        }
+      }, { passive: true });
+
+      handle.addEventListener('touchend', function () {
+        touchStartY = null;
+      }, { passive: true });
+
+      // Tap on handle: if collapsed, restore to normal; otherwise toggle expand
+      handle.addEventListener('click', function () {
+        if (self._toolbarState === 'collapsed') {
+          self._setToolbarState('normal');
+        } else if (self._toolbarState === 'normal') {
+          self._setToolbarState('expanded');
+        } else {
+          self._setToolbarState('normal');
+        }
+      });
+    }
 
     // visualViewport positioning: keeps toolbar above the virtual keyboard
     if (window.visualViewport) {
@@ -988,6 +1085,24 @@
       window.visualViewport.addEventListener('resize', reposition);
       window.visualViewport.addEventListener('scroll', reposition);
     }
+  };
+
+  App.prototype._setToolbarState = function (state) {
+    var toolbar = document.getElementById('mobile-toolbar');
+    if (!toolbar) return;
+
+    this._toolbarState = state;
+
+    toolbar.classList.toggle('expanded', state === 'expanded');
+    toolbar.classList.toggle('collapsed', state === 'collapsed');
+    document.body.classList.toggle('toolbar-expanded', state === 'expanded');
+    document.body.classList.toggle('toolbar-collapsed', state === 'collapsed');
+
+    // Refit terminals after the transition completes
+    var self = this;
+    setTimeout(function () {
+      if (self._engine) self._engine.refitAll();
+    }, 250);
   };
 
   App.prototype._sendToActiveTerminal = function (data) {

@@ -77,9 +77,51 @@ Task completion notification system: audio ding, browser notifications, visual f
 2. `feature/command-palette` → `main`: Conflict in PROGRESS.md only (resolved)
 3. `feature/notifications` → `main`: Conflicts in PROGRESS.md, config/terminaldeck.json, server/websocket.js, client/js/app.js (all resolved — kept both features' additions)
 
+---
+
+## Markdown Notes
+
+**Branch:** `feature/markdown-notes`
+**Status:** Complete — Ready to merge
+
+### What was built
+Embedded markdown note panels that live alongside terminal sessions in the grid layout. Notes use EasyMDE (CodeMirror-based) with full dark theme, autosave, and multi-client sync via WebSocket broadcast.
+
+### Backend
+- **`server/notes.js`** — NoteManager class: CRUD operations (`listNotes`, `getNote`, `saveNote`, `createNote`, `deleteNote`), path traversal protection, slug-based ID generation, config persistence
+- **`server/index.js`** — 5 REST endpoints: `GET /api/notes`, `GET /api/notes/:id`, `PUT /api/notes/:id`, `POST /api/notes`, `DELETE /api/notes/:id`
+- **`server/config.js`** — Notes array validation (id/name/file required, duplicate ID check), defaults preservation
+- **`server/websocket.js`** — `broadcastNoteSaved(noteId)` for multi-client sync
+- **`config/terminaldeck.json`** — Added `notes` array with example Scratchpad entry
+
+### Frontend
+- **`client/js/note-panel.js`** — NotePanel class matching TerminalConnection interface (`attach`, `detach`, `refit`, `focus`, `isActive`, `destroy`, `moveTo`). EasyMDE init, 3s autosave debounce, Ctrl+S, dirty state tracking
+- **`client/js/app.js`** — Notes loaded at init via API, create dialog with Terminal/Note type selector, note_saved WebSocket handler, beforeunload dirty check, sidebar close minimizes notes
+- **`client/js/terminal-list.js`** — Memo icon for notes, dirty asterisk indicator, activity dot skipped for notes
+- **`client/css/style.css`** — Full EasyMDE dark theme (editor, toolbar, preview, CodeMirror), note panel wrapper layout, type selector styles, mobile responsive overrides
+- **`client/index.html`** — EasyMDE CDN (CSS + JS), note-panel.js script tag
+
+### Architecture Decisions
+- `_connections{}` stores both TerminalConnection and NotePanel, distinguished by `.type === 'note'`
+- Layout engine unchanged — `assignTerminal()` works with any panel implementing the interface
+- Notes persist in config, close button minimizes (doesn't destroy)
+- EasyMDE loaded via CDN, not vendored
+- Notes stored as `.md` files in `/workspace/.unity/notes/`
+
+### Commits (5)
+1. `ab511a0` — Backend note CRUD: NoteManager, API routes, WebSocket broadcast
+2. `65ad7b8` — NotePanel class and EasyMDE integration
+3. `da78187` — Layout engine integration and UI wiring
+4. `3258d46` — EasyMDE dark theme and note panel CSS
+5. `a425355` — Polish: error handling, config defaults, mobile CSS
+
+### Tests: 32 new tests (19 server + 13 client), all passing
+
+---
+
 ## Final Summary
 
-- **3 features implemented**: Task Shortcuts, Command Palette, Notifications
-- **98 new tests** across all features
-- **Files changed**: 18 files modified/created
+- **4 features implemented**: Task Shortcuts, Command Palette, Notifications, Markdown Notes
+- **130 new tests** across all features
+- **Files changed**: 24 files modified/created
 - **No regressions** to existing functionality

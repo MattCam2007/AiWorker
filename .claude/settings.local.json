@@ -42,7 +42,11 @@
       "Bash(node:)",
       "WebFetch(domain:raw.githubusercontent.com)",
       "Bash(git checkout:*)",
-      "Bash(git merge:*)"
+      "Bash(test -f /.dockerenv)",
+      "Bash(git worktree:*)",
+      "Bash(git merge:*)",
+      "Bash(git rm:*)",
+      "Bash(git:*)"
     ]
   }
 }

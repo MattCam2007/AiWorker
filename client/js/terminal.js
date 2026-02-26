@@ -155,6 +155,52 @@
         // re-queries DA and the response (e.g. \x1b[>0;276;0c) arrives when
         // tmux isn't expecting it, so it leaks as visible text in the shell.
         if (/^\x1b\[[\?>][\d;]*c$/.test(data)) return;
+
+        // Mobile toolbar Ctrl modifier: when active, transform the first
+        // character of the next input into its Ctrl code (e.g. 'a' → \x01).
+        // We intercept here in onData — the single point where all input
+        // (keyboard, IME composition, paste) has been resolved to final
+        // characters — so there is no risk of double-sending.
+        var app = ns.app;
+        if (app && app._ctrlActive) {
+          var first = data.charAt(0).toUpperCase();
+          var ctrlCode = first.charCodeAt(0) - 64;
+          if (ctrlCode >= 1 && ctrlCode <= 26) {
+            self._ws.send(JSON.stringify({
+              type: 'input',
+              data: String.fromCharCode(ctrlCode)
+            }));
+            // Send remaining characters (if any) unmodified
+            if (data.length > 1) {
+              self._ws.send(JSON.stringify({
+                type: 'input',
+                data: data.substring(1)
+              }));
+            }
+          } else {
+            // Non-letter key (number, symbol, etc.) — send as-is
+            self._ws.send(JSON.stringify({ type: 'input', data: data }));
+          }
+          app._deactivateCtrl();
+          return;
+        }
+
+        // Mobile toolbar Alt modifier: prefix first character with ESC.
+        if (app && app._altActive) {
+          self._ws.send(JSON.stringify({
+            type: 'input',
+            data: '\x1b' + data.charAt(0)
+          }));
+          if (data.length > 1) {
+            self._ws.send(JSON.stringify({
+              type: 'input',
+              data: data.substring(1)
+            }));
+          }
+          app._deactivateAlt();
+          return;
+        }
+
         self._ws.send(JSON.stringify({ type: 'input', data: data }));
       }
     });

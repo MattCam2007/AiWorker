@@ -1333,6 +1333,50 @@ body::after {
   align-items: center;
   user-select: none;
   -webkit-user-select: none;
+  transition: padding-top 0.2s ease;
+}
+
+.mobile-toolbar-handle {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  padding: 2px 0;
+  cursor: grab;
+  touch-action: none;
+}
+
+.mobile-toolbar-handle::after {
+  content: '';
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--td-text-dim);
+  opacity: 0.5;
+  transition: opacity 0.15s ease, background 0.15s ease;
+}
+
+.mobile-toolbar-handle:active::after {
+  opacity: 1;
+  background: var(--td-cyan);
+}
+
+.mobile-toolbar-extra {
+  display: none;
+}
+
+#mobile-toolbar.expanded .mobile-toolbar-extra {
+  display: block;
+}
+
+/* Collapsed: hide all buttons, show only the handle */
+#mobile-toolbar.collapsed .mobile-toolbar-btn {
+  display: none;
+}
+
+#mobile-toolbar.collapsed {
+  border-top-color: transparent;
+  background: transparent;
+  padding: 2px 4px;
 }
 
 @media (max-width: 767px) {
@@ -1342,12 +1386,21 @@ body::after {
 
   #main-content {
     padding-bottom: 84px;
+    transition: padding-bottom 0.2s ease;
+  }
+
+  body.toolbar-expanded #main-content {
+    padding-bottom: 168px;
+  }
+
+  body.toolbar-collapsed #main-content {
+    padding-bottom: 16px;
   }
 }
 
 .mobile-toolbar-btn {
-  flex: 1 0 auto;
-  min-width: 40px;
+  flex: 1 0 calc((100% - 28px) / 8);
+  min-width: 0;
   height: 34px;
   padding: 0 8px;
   font-family: var(--td-font-terminal);

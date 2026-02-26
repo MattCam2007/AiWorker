@@ -5,6 +5,8 @@ services:
     ports:
       - "${TERMINALDECK_PORT:-3000}:3000"
     volumes:
+      - ./server:/app/server
+      - ./client:/app/client
       - ./config:/app/config
       - ${WORKSPACE_PATH:-./workspace}:/workspace
       - ${SSH_KEYS_PATH:-/dev/null}:/home/terminaldeck/.ssh:ro

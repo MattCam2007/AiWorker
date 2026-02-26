@@ -26,13 +26,8 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm install --omit=dev
 
-# Copy application files
-COPY server/ ./server/
-COPY client/ ./client/
-COPY config/ ./config/
-
-# Create default directories
-RUN mkdir -p /workspace
+# Create mount points for application directories (mounted via docker-compose)
+RUN mkdir -p /app/server /app/client /app/config /workspace
 
 # Copy and enable entrypoint
 COPY entrypoint.sh /entrypoint.sh
