@@ -13,21 +13,28 @@
     this.onSelect = null;
   }
 
-  TerminalList.prototype.upsert = function (id, name, location, active) {
+  TerminalList.prototype.upsert = function (id, name, location, active, panelType) {
     var existing = this._items.get(id);
     if (existing) {
       existing.querySelector('.tl-name').textContent = name;
       this._setLocation(existing, location);
-      this._setActivity(existing, active);
+      this._setActivity(existing, active, panelType);
       return;
     }
 
+    var isNote = panelType === 'note';
     var item = document.createElement('div');
     item.className = 'tl-item';
     item.dataset.terminalId = id;
+    if (isNote) item.dataset.panelType = 'note';
 
     var dot = document.createElement('span');
-    dot.className = 'tl-status ' + (active ? 'tl-status-active' : 'tl-status-idle');
+    if (isNote) {
+      dot.className = 'tl-status tl-status-note';
+      dot.textContent = '\uD83D\uDCDD'; // memo emoji
+    } else {
+      dot.className = 'tl-status ' + (active ? 'tl-status-active' : 'tl-status-idle');
+    }
     item.appendChild(dot);
 
     var nameEl = document.createElement('span');
@@ -101,9 +108,11 @@
     if (minBtn) minBtn.style.display = (location === 'Minimized') ? 'none' : '';
   };
 
-  TerminalList.prototype._setActivity = function (el, active) {
+  TerminalList.prototype._setActivity = function (el, active, panelType) {
     var dot = el.querySelector('.tl-status');
     if (!dot) return;
+    // Notes always show the doc icon, not the activity dot
+    if (panelType === 'note' || el.dataset.panelType === 'note') return;
     if (active) {
       dot.classList.add('tl-status-active');
       dot.classList.remove('tl-status-idle');

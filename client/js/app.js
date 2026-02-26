@@ -7,7 +7,7 @@
 
   function App() {
     this._config = null;
-    this._connections = {};
+    this._connections = {};  // id -> TerminalConnection or NotePanel
     this._engine = null;
     this._statusEl = null;
     this._controlWs = null;
@@ -39,7 +39,11 @@
         return self._loadSessions();
       })
       .then(function () {
+        return self._loadNotes();
+      })
+      .then(function () {
         self._updateStatus();
+        self._wireBeforeUnload();
       })
       .catch(function (err) {
         console.error('[app] init error:', err);
@@ -64,7 +68,13 @@
     var grid = document.getElementById('grid-container');
     this._engine = new ns.LayoutEngine(grid);
     this._engine._onCloseTerminal = function (id) {
-      self._sendDestroyTerminal(id);
+      var conn = self._connections[id];
+      if (conn && conn.type === 'note') {
+        // For notes, close just minimizes (doesn't destroy)
+        self._engine.minimizeTerminal(id);
+      } else {
+        self._sendDestroyTerminal(id);
+      }
     };
     this._engine._onMinimizeTerminal = function () {
       self._syncTerminalList();
@@ -142,6 +152,9 @@
           break;
         case 'activity':
           self._handleActivity(msg);
+          break;
+        case 'note_saved':
+          self._handleNoteSaved(msg);
           break;
       }
     });
@@ -301,10 +314,13 @@
       });
     }
 
-    // Remove connections for gone sessions
+    // Remove connections for gone sessions (but not notes)
     currentIds.forEach(function (id) {
       if (!serverIds.has(id)) {
-        self._connections[id].destroy();
+        var conn = self._connections[id];
+        // Don't remove note panels — they're managed separately
+        if (conn && conn.type === 'note') return;
+        conn.destroy();
         if (self._engine) {
           self._engine._removeFromGrid(id);
           self._engine._removeFromMinimized(id);
@@ -399,11 +415,28 @@
 
     // Build dialog contents
     dialog.innerHTML = '';
+    var createType = 'terminal';
 
     var title = document.createElement('div');
     title.className = 'ephemeral-title';
-    title.textContent = 'New Terminal';
+    title.textContent = 'New Panel';
     dialog.appendChild(title);
+
+    // Type selector
+    var typeRow = document.createElement('div');
+    typeRow.className = 'ephemeral-type-row';
+
+    var terminalTypeBtn = document.createElement('button');
+    terminalTypeBtn.className = 'ephemeral-type-btn ephemeral-type-active';
+    terminalTypeBtn.textContent = 'Terminal';
+    typeRow.appendChild(terminalTypeBtn);
+
+    var noteTypeBtn = document.createElement('button');
+    noteTypeBtn.className = 'ephemeral-type-btn';
+    noteTypeBtn.textContent = 'Note';
+    typeRow.appendChild(noteTypeBtn);
+
+    dialog.appendChild(typeRow);
 
     // Name field
     var nameField = self._buildNameField();
@@ -412,7 +445,7 @@
     dialog.appendChild(nameLabel);
     dialog.appendChild(nameInput);
 
-    // Command field with info icon
+    // Command field with info icon (terminal only)
     var cmdField = self._buildCommandField();
     var cmdLabelRow = cmdField.cmdLabelRow;
     var cmdInput = cmdField.cmdInput;
@@ -421,31 +454,68 @@
     dialog.appendChild(cmdInput);
     dialog.appendChild(infoTip);
 
-    // Header background color
+    // Header background color (terminal only)
     var selectedBg = null;
     var selectedColor = null;
+    var terminalOnlyEls = [];
+
     if (this._engine) {
       var bgLabel = document.createElement('label');
       bgLabel.className = 'edit-label';
       bgLabel.textContent = 'Header Background';
       dialog.appendChild(bgLabel);
+      terminalOnlyEls.push(bgLabel);
 
       var bgSwatches = this._engine._createColorSwatches(null, function (color) {
         selectedBg = color;
       });
       dialog.appendChild(bgSwatches);
+      terminalOnlyEls.push(bgSwatches);
 
       // Header text color
       var textLabel = document.createElement('label');
       textLabel.className = 'edit-label';
       textLabel.textContent = 'Header Text';
       dialog.appendChild(textLabel);
+      terminalOnlyEls.push(textLabel);
 
       var textSwatches = this._engine._createColorSwatches(null, function (color) {
         selectedColor = color;
       });
       dialog.appendChild(textSwatches);
+      terminalOnlyEls.push(textSwatches);
     }
+
+    // Track terminal-only elements for visibility toggling
+    terminalOnlyEls.push(cmdLabelRow, cmdInput, infoTip);
+
+    function setType(type) {
+      createType = type;
+      if (type === 'terminal') {
+        terminalTypeBtn.classList.add('ephemeral-type-active');
+        noteTypeBtn.classList.remove('ephemeral-type-active');
+        terminalOnlyEls.forEach(function (el) { el.style.display = ''; });
+        nameInput.placeholder = 'Session name';
+        nameInput.value = self._nextDefaultName();
+      } else {
+        noteTypeBtn.classList.add('ephemeral-type-active');
+        terminalTypeBtn.classList.remove('ephemeral-type-active');
+        terminalOnlyEls.forEach(function (el) { el.style.display = 'none'; });
+        nameInput.placeholder = 'Note name';
+        nameInput.value = 'New Note';
+      }
+      nameInput.focus();
+      nameInput.select();
+    }
+
+    terminalTypeBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      setType('terminal');
+    });
+    noteTypeBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      setType('note');
+    });
 
     // Buttons
     var btnRow = document.createElement('div');
@@ -472,8 +542,12 @@
         nameInput.focus();
         return;
       }
-      var command = cmdInput.value.trim();
-      self._sendCreateTerminal(name, command, selectedBg, selectedColor);
+      if (createType === 'note') {
+        self._createNoteViaApi(name);
+      } else {
+        var command = cmdInput.value.trim();
+        self._sendCreateTerminal(name, command, selectedBg, selectedColor);
+      }
       closeDialog();
     });
     btnRow.appendChild(createBtn);
@@ -553,7 +627,7 @@
     if (!hasConnections && !existing) {
       var msg = document.createElement('div');
       msg.className = 'empty-state';
-      msg.textContent = 'No terminals. Click + to create one.';
+      msg.textContent = 'No panels. Click + to create a terminal or note.';
       grid.appendChild(msg);
     } else if (hasConnections && existing) {
       existing.remove();
@@ -610,7 +684,13 @@
     };
 
     this._terminalList.onClose = function (id) {
-      self._sendDestroyTerminal(id);
+      var conn = self._connections[id];
+      if (conn && conn.type === 'note') {
+        // Notes minimize on close (they persist in config)
+        if (self._engine) self._engine.minimizeTerminal(id);
+      } else {
+        self._sendDestroyTerminal(id);
+      }
     };
 
     this._terminalList.onSelect = function (id) {
@@ -643,6 +723,7 @@
       var name = conn.config.name || id;
       var location = 'Minimized';
       var active = conn.isActive();
+      var panelType = conn.type === 'note' ? 'note' : 'terminal';
 
       // Check if it's in a grid cell
       for (var i = 0; i < self._engine._cells.length; i++) {
@@ -654,7 +735,13 @@
         }
       }
 
-      self._terminalList.upsert(id, name, location, active);
+      // Add dirty indicator for notes
+      var displayName = name;
+      if (panelType === 'note' && conn.isDirty && conn.isDirty()) {
+        displayName = name + ' *';
+      }
+
+      self._terminalList.upsert(id, displayName, location, active, panelType);
       listed.delete(id);
     });
 
@@ -912,6 +999,9 @@
 
     if (!activeConn) return;
 
+    // Mobile toolbar only works with terminals, not note panels
+    if (activeConn.type === 'note') return;
+
     var term = activeConn._terminal;
     var ws = activeConn._ws;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
@@ -963,6 +1053,80 @@
     ws.send(JSON.stringify({ type: 'input', data: data }));
 
     activeConn.focus();
+  };
+
+  // --- Notes ---
+
+  App.prototype._loadNotes = function () {
+    var self = this;
+    return fetch('/api/notes')
+      .then(function (res) { return res.json(); })
+      .then(function (notes) {
+        self._applyNotes(notes);
+      })
+      .catch(function (err) {
+        console.error('[app] loadNotes error:', err);
+      });
+  };
+
+  App.prototype._applyNotes = function (notes) {
+    var self = this;
+    notes.forEach(function (n) {
+      if (self._connections[n.id]) return;
+      var panel = new ns.NotePanel(n);
+      panel._onDirtyChange = function () {
+        self._syncTerminalList();
+      };
+      self._connections[n.id] = panel;
+      self._assignToFirstEmptyCell(n.id, panel);
+    });
+    this._updateEmptyState();
+    this._syncTerminalList();
+  };
+
+  App.prototype._handleNoteSaved = function (msg) {
+    var conn = this._connections[msg.noteId];
+    if (conn && conn.type === 'note' && conn._easyMDE) {
+      // Another tab/client saved this note — reload if not dirty
+      if (!conn.isDirty()) {
+        conn._loadContent();
+      }
+    }
+  };
+
+  App.prototype._createNoteViaApi = function (name) {
+    var self = this;
+    return fetch('/api/notes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: name })
+    })
+      .then(function (res) { return res.json(); })
+      .then(function (note) {
+        var panel = new ns.NotePanel(note);
+        panel._onDirtyChange = function () {
+          self._syncTerminalList();
+        };
+        self._connections[note.id] = panel;
+        self._assignToFirstEmptyCell(note.id, panel);
+        self._updateEmptyState();
+        self._syncTerminalList();
+        return note;
+      });
+  };
+
+  App.prototype._wireBeforeUnload = function () {
+    var self = this;
+    window.addEventListener('beforeunload', function (e) {
+      var hasDirty = Object.keys(self._connections).some(function (id) {
+        var conn = self._connections[id];
+        return conn.type === 'note' && conn.isDirty();
+      });
+      if (hasDirty) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    });
   };
 
   ns.App = App;
