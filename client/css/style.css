@@ -1313,10 +1313,7 @@ body::after {
   border-top: 1px solid var(--td-border);
   padding: 4px 4px;
   gap: 4px;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-  white-space: nowrap;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   align-items: center;
   user-select: none;
   -webkit-user-select: none;
@@ -1328,12 +1325,12 @@ body::after {
   }
 
   #main-content {
-    padding-bottom: 42px;
+    padding-bottom: 84px;
   }
 }
 
 .mobile-toolbar-btn {
-  flex-shrink: 0;
+  flex: 1 0 auto;
   min-width: 40px;
   height: 34px;
   padding: 0 8px;
