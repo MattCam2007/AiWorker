@@ -13,6 +13,7 @@
     this._controlWs = null;
     this._fileTree = null;
     this._terminalList = null;
+    this._notificationsMuted = false;
   }
 
   App.prototype.init = function () {
@@ -34,6 +35,7 @@
         self._wireSidebarToggle();
         self._wireOrientationChange();
         self._initMobileToolbar();
+        self._initNotifications();
         self._connectControl();
 
         return self._loadSessions();
@@ -142,6 +144,9 @@
           break;
         case 'activity':
           self._handleActivity(msg);
+          break;
+        case 'task_complete':
+          self._handleTaskComplete(msg);
           break;
       }
     });
@@ -963,6 +968,95 @@
     ws.send(JSON.stringify({ type: 'input', data: data }));
 
     activeConn.focus();
+  };
+
+  // --- Notifications ---
+
+  App.prototype._initNotifications = function () {
+    var self = this;
+
+    // Request browser notification permission
+    if (typeof Notification !== 'undefined' && Notification.requestPermission) {
+      Notification.requestPermission();
+    }
+
+    // Wire bell toggle button
+    var toggleBtn = document.getElementById('notification-toggle-btn');
+    if (toggleBtn) {
+      toggleBtn.addEventListener('click', function () {
+        self._toggleNotificationMute();
+        toggleBtn.textContent = self._notificationsMuted ? 'Muted' : 'Bell';
+        toggleBtn.classList.toggle('notification-muted', self._notificationsMuted);
+      });
+    }
+  };
+
+  App.prototype._toggleNotificationMute = function () {
+    this._notificationsMuted = !this._notificationsMuted;
+  };
+
+  App.prototype._handleTaskComplete = function (msg) {
+    var terminalId = msg.terminalId;
+
+    // Play audio ding (unless muted)
+    if (!this._notificationsMuted) {
+      this._playDing();
+    }
+
+    // Browser notification when tab is hidden (unless muted)
+    if (!this._notificationsMuted && document.hidden && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+      var name = terminalId;
+      var conn = this._connections[terminalId];
+      if (conn && conn.config && conn.config.name) {
+        name = conn.config.name;
+      }
+      new Notification('TerminalDeck — Task Complete', {
+        body: 'Command finished in ' + name,
+        tag: 'td-task-' + terminalId
+      });
+    }
+
+    // Visual flash on the terminal's grid cell
+    this._flashTerminalCell(terminalId);
+  };
+
+  App.prototype._playDing = function () {
+    try {
+      var AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return;
+      var ctx = new AudioCtx();
+      var osc = ctx.createOscillator();
+      var gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.frequency.value = 830;
+      osc.type = 'sine';
+      gain.gain.setValueAtTime(0.3, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.3);
+    } catch (e) {
+      // Audio playback failure is non-critical
+    }
+  };
+
+  App.prototype._flashTerminalCell = function (terminalId) {
+    if (!this._engine) return;
+
+    for (var i = 0; i < this._engine._cells.length; i++) {
+      var cell = this._engine._cells[i];
+      var info = this._engine._cellMap.get(cell);
+      if (info && info.terminalId === terminalId) {
+        cell.classList.remove('cell-task-complete');
+        // Force reflow to restart animation
+        void cell.offsetWidth;
+        cell.classList.add('cell-task-complete');
+        setTimeout(function (c) {
+          c.classList.remove('cell-task-complete');
+        }, 1000, cell);
+        break;
+      }
+    }
   };
 
   ns.App = App;

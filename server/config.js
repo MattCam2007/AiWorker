@@ -10,7 +10,8 @@ const DEFAULT_SETTINGS = {
     fontFamily: 'Fira Code, monospace',
     fontSize: 14
   },
-  shell: '/bin/bash'
+  shell: '/bin/bash',
+  promptPattern: '\\$\\s*$'
 };
 
 class ConfigManager extends EventEmitter {
@@ -98,6 +99,9 @@ class ConfigManager extends EventEmitter {
       }
       if (s.shell !== undefined && typeof s.shell !== 'string') {
         throw new Error('settings.shell must be a string');
+      }
+      if (s.promptPattern !== undefined && typeof s.promptPattern !== 'string') {
+        throw new Error('settings.promptPattern must be a string');
       }
     }
   }

@@ -126,7 +126,7 @@ async function createApp(options = {}) {
     serveStatic(req, res);
   });
 
-  const wsServer = new TerminalWSServer(server, sessionManager, { serverToken });
+  const wsServer = new TerminalWSServer(server, sessionManager, { serverToken, configManager });
   wsServer.startActivityBroadcasting();
 
   sessionManager.on('sessionDied', () => { wsServer._broadcastSessions(); });
