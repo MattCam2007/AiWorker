@@ -13,6 +13,7 @@
     this._controlWs = null;
     this._fileTree = null;
     this._terminalList = null;
+    this._noteList = null;
     this._commandPalette = null;
     this._notificationsMuted = false;
     this._ctrlActive = false;
@@ -197,6 +198,35 @@
     if (this._controlWs && this._controlWs.readyState === WebSocket.OPEN) {
       this._controlWs.send(JSON.stringify({ type: 'destroy_terminal', id: id }));
     }
+  };
+
+  App.prototype._deleteNote = function (id) {
+    var conn = this._connections[id];
+    if (!conn) return;
+    var name = (conn.config && conn.config.name) || id;
+    if (!confirm('Delete note "' + name + '"? The file will be removed.')) return;
+
+    var self = this;
+    fetch('/api/notes/' + encodeURIComponent(id) + '?deleteFile=true', {
+      method: 'DELETE'
+    })
+      .then(function (res) {
+        if (!res.ok) throw new Error('Delete failed: ' + res.status);
+        return res.json();
+      })
+      .then(function () {
+        conn.destroy();
+        if (self._engine) {
+          self._engine._removeFromGrid(id);
+          self._engine._removeFromMinimized(id);
+        }
+        delete self._connections[id];
+        self._syncTerminalList();
+        self._updateEmptyState();
+      })
+      .catch(function (err) {
+        console.error('[app] delete note error:', err);
+      });
   };
 
   App.prototype._sendUpdateTerminal = function (id, name, headerBg, headerColor) {
@@ -685,29 +715,35 @@
   // --- Sidebar / UI ---
 
   App.prototype._initTerminalList = function () {
-    var container = document.getElementById('terminal-list');
-    if (!container || !ns.TerminalList) return;
-
     var self = this;
-    this._terminalList = new ns.TerminalList(container);
 
-    this._terminalList.onMinimize = function (id) {
-      if (self._engine) self._engine.minimizeTerminal(id);
-    };
-
-    this._terminalList.onClose = function (id) {
-      var conn = self._connections[id];
-      if (conn && conn.type === 'note') {
-        // Notes minimize on close (they persist in config)
+    var termContainer = document.getElementById('terminal-list');
+    if (termContainer && ns.TerminalList) {
+      this._terminalList = new ns.TerminalList(termContainer);
+      this._terminalList.onMinimize = function (id) {
         if (self._engine) self._engine.minimizeTerminal(id);
-      } else {
+      };
+      this._terminalList.onClose = function (id) {
         self._sendDestroyTerminal(id);
-      }
-    };
+      };
+      this._terminalList.onSelect = function (id) {
+        self._handleTerminalListSelect(id);
+      };
+    }
 
-    this._terminalList.onSelect = function (id) {
-      self._handleTerminalListSelect(id);
-    };
+    var noteContainer = document.getElementById('note-list');
+    if (noteContainer && ns.TerminalList) {
+      this._noteList = new ns.TerminalList(noteContainer);
+      this._noteList.onMinimize = function (id) {
+        if (self._engine) self._engine.minimizeTerminal(id);
+      };
+      this._noteList.onClose = function (id) {
+        self._deleteNote(id);
+      };
+      this._noteList.onSelect = function (id) {
+        self._handleTerminalListSelect(id);
+      };
+    }
   };
 
   App.prototype._initSidebarSections = function () {
@@ -722,20 +758,21 @@
   };
 
   App.prototype._syncTerminalList = function () {
-    if (!this._terminalList || !this._engine) return;
+    if (!this._engine) return;
 
     var self = this;
     var ids = Object.keys(this._connections);
 
-    // Build a set of IDs currently in the list
-    var listed = new Set(this._terminalList._items.keys());
+    // Build sets of IDs currently in each list
+    var listedTerminals = this._terminalList ? new Set(this._terminalList._items.keys()) : new Set();
+    var listedNotes = this._noteList ? new Set(this._noteList._items.keys()) : new Set();
 
     ids.forEach(function (id) {
       var conn = self._connections[id];
       var name = conn.config.name || id;
       var location = 'Minimized';
       var active = conn.isActive();
-      var panelType = conn.type === 'note' ? 'note' : 'terminal';
+      var isNote = conn.type === 'note';
 
       // Check if it's in a grid cell
       for (var i = 0; i < self._engine._cells.length; i++) {
@@ -747,19 +784,30 @@
         }
       }
 
-      // Add dirty indicator for notes
-      var displayName = name;
-      if (panelType === 'note' && conn.isDirty && conn.isDirty()) {
-        displayName = name + ' *';
+      if (isNote) {
+        // Add dirty indicator for notes
+        var displayName = name;
+        if (conn.isDirty && conn.isDirty()) {
+          displayName = name + ' *';
+        }
+        if (self._noteList) {
+          self._noteList.upsert(id, displayName, location, active, 'note');
+        }
+        listedNotes.delete(id);
+      } else {
+        if (self._terminalList) {
+          self._terminalList.upsert(id, name, location, active, 'terminal');
+        }
+        listedTerminals.delete(id);
       }
-
-      self._terminalList.upsert(id, displayName, location, active, panelType);
-      listed.delete(id);
     });
 
     // Remove stale entries
-    listed.forEach(function (id) {
-      self._terminalList.remove(id);
+    listedTerminals.forEach(function (id) {
+      if (self._terminalList) self._terminalList.remove(id);
+    });
+    listedNotes.forEach(function (id) {
+      if (self._noteList) self._noteList.remove(id);
     });
   };
 

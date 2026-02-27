@@ -946,6 +946,7 @@ body::after {
 
 .cell-terminal .xterm-viewport {
   overflow-y: auto !important;
+  -webkit-overflow-scrolling: touch;
 }
 
 /* === Cell Popover === */

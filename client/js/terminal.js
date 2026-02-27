@@ -146,6 +146,82 @@
       }
     }, { passive: false });
 
+    // Touch scroll: forward vertical swipes to tmux (mobile equivalent of
+    // the wheel handler above).  We track incremental finger movement and
+    // convert it into SGR scroll-up/down sequences.
+    (function () {
+      var touchStartY = null;
+      var touchStartX = null;
+      var scrollAccum = 0;
+      var isScrolling = false;
+      var PX_PER_LINE = 20; // pixels of movement per scroll line
+
+      el.addEventListener('touchstart', function (e) {
+        if (e.touches.length === 1) {
+          touchStartY = e.touches[0].clientY;
+          touchStartX = e.touches[0].clientX;
+          scrollAccum = 0;
+          isScrolling = false;
+        }
+      }, { passive: true });
+
+      el.addEventListener('touchmove', function (e) {
+        if (!self._ws || self._ws.readyState !== WebSocket.OPEN) return;
+        if (!self._terminal) return;
+        if (!self._mouseTrackingStripped) return;
+        if (touchStartY === null || e.touches.length !== 1) return;
+
+        var touch = e.touches[0];
+        var deltaY = touch.clientY - touchStartY;
+
+        // On first move, decide if this is a vertical scroll or horizontal
+        // gesture (e.g. text selection).  Once decided, stick with it.
+        if (!isScrolling) {
+          var deltaX = Math.abs(touch.clientX - touchStartX);
+          if (Math.abs(deltaY) < 8 && deltaX < 8) return; // too small to decide
+          if (deltaX > Math.abs(deltaY)) return; // horizontal — don't intercept
+          isScrolling = true;
+        }
+
+        e.preventDefault();
+
+        // Incremental tracking: accumulate distance since last event
+        scrollAccum += touch.clientY - touchStartY;
+        touchStartY = touch.clientY;
+
+        var lines = Math.floor(Math.abs(scrollAccum) / PX_PER_LINE);
+        if (lines < 1) return;
+
+        // Swipe up (negative) → scroll up (see history, btn 64)
+        // Swipe down (positive) → scroll down (see recent, btn 65)
+        var btn = scrollAccum < 0 ? 64 : 65;
+        scrollAccum = scrollAccum % PX_PER_LINE; // keep remainder
+
+        var rect = el.getBoundingClientRect();
+        var renderer = self._terminal._core._renderService;
+        var cellW = renderer.dimensions.css.cell.width || 9;
+        var cellH = renderer.dimensions.css.cell.height || 17;
+        var col = Math.floor((touch.clientX - rect.left) / cellW) + 1;
+        var row = Math.floor((touch.clientY - rect.top) / cellH) + 1;
+        col = Math.max(1, Math.min(col, self._terminal.cols));
+        row = Math.max(1, Math.min(row, self._terminal.rows));
+
+        for (var i = 0; i < lines; i++) {
+          self._ws.send(JSON.stringify({
+            type: 'input',
+            data: '\x1b[<' + btn + ';' + col + ';' + row + 'M'
+          }));
+        }
+      }, { passive: false });
+
+      el.addEventListener('touchend', function () {
+        touchStartY = null;
+        touchStartX = null;
+        scrollAccum = 0;
+        isScrolling = false;
+      }, { passive: true });
+    })();
+
     // Wire terminal input to WS
     this._terminal.onData(function (data) {
       if (self._ws && self._ws.readyState === WebSocket.OPEN) {
