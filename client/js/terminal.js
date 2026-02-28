@@ -19,8 +19,6 @@
     this._detaching = false;
     this._exited = false;
     this._mouseTrackingStripped = false;
-    this._searchAddon = null;
-
     // Callback hooks (set by App)
     this._toastTimer = null;
     this._onStatusChange = null;
@@ -50,12 +48,22 @@
     // Open terminal in element
     this._terminal.open(el);
 
+    // When keyboard is hidden, prevent ANY focus on the xterm textarea.
+    // This catches xterm.js's own internal click→focus path.
+    var textarea = this._terminal.textarea;
+    if (textarea) {
+      textarea.addEventListener('focus', function () {
+        if (TerminalConnection.keyboardHidden) {
+          textarea.blur();
+        }
+      });
+    }
+
     // Prevent mobile input duplication: on Android, xterm.js's hidden
     // textarea grows with every word. When autocorrect modifies already-
     // sent text, xterm.js's _handleAnyTextareaChanges can re-send the
     // entire accumulated content. Clear the textarea after each composition
     // completes so the blast radius is at most one word.
-    var textarea = this._terminal.textarea;
     if (textarea) {
       var term = this._terminal;
       textarea.addEventListener('compositionend', function () {
@@ -333,10 +341,6 @@
       clearTimeout(this._reconnectTimer);
       this._reconnectTimer = null;
     }
-    if (this._searchAddon) {
-      this._searchAddon.dispose();
-      this._searchAddon = null;
-    }
     if (this._terminal) {
       this._terminal.dispose();
       this._terminal = null;
@@ -397,7 +401,12 @@
     }
   };
 
+  // Static flag: when true, suppress all terminal focus (hides virtual keyboard).
+  // Controlled by App keyboard toggle.
+  TerminalConnection.keyboardHidden = false;
+
   TerminalConnection.prototype.focus = function () {
+    if (TerminalConnection.keyboardHidden) return;
     if (this._terminal) {
       this._terminal.focus();
     }

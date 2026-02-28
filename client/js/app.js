@@ -19,7 +19,6 @@
     this._ctrlActive = false;
     this._altActive = false;
     this._toolbarMode = 'keys';
-    this._searchOptions = { regex: false, caseSensitive: false, wholeWord: false };
     this._cmdsHistory = [];
     this._cmdsFuse = null;
   }
@@ -1057,13 +1056,7 @@
     'tilde':       '~',
     'slash':       '/',
     'colon':       ':',
-    'semicolon':   ';',
-    'backslash':   '\\',
-    'singlequote': "'",
-    'doublequote': '"',
     'bang':        '!',
-    'ampersand':   '&',
-    'dollar':      '$',
     'lparen':      '(',
     'rparen':      ')',
     'lbracket':    '[',
@@ -1072,6 +1065,12 @@
     'rbrace':      '}',
     'lt':          '<',
     'gt':          '>',
+    '1':           '1',
+    '2':           '2',
+    '3':           '3',
+    '4':           '4',
+    '5':           '5',
+    'enter':       '\r',
     'pgup':        '\x1b[5~',
     'pgdn':        '\x1b[6~',
     'home':        '\x1b[H',
@@ -1092,6 +1091,7 @@
       if (e.target.tagName === 'INPUT') return;
       e.preventDefault();
     });
+
 
     toolbar.addEventListener('click', function (e) {
       var btn = e.target.closest('.mobile-toolbar-btn');
@@ -1196,9 +1196,25 @@
       });
     }
 
+    // --- Keyboard toggle ---
+    // Default: keyboard hidden on mobile; user taps ⌨ to show it.
+    this._keyboardHidden = true;
+    ns.TerminalConnection.keyboardHidden = true;
+    var kbToggle = document.getElementById('mt-kb-toggle');
+    if (kbToggle) {
+      kbToggle.classList.add('kb-hidden');
+      kbToggle.addEventListener('click', function (e) {
+        e.stopPropagation();
+        self._keyboardHidden = !self._keyboardHidden;
+        ns.TerminalConnection.keyboardHidden = self._keyboardHidden;
+        kbToggle.classList.toggle('kb-hidden', self._keyboardHidden);
+        self._applyKeyboardHidden();
+      });
+    }
+
     // --- Mode tabs and panels ---
     this._initMobileToolbarModes();
-    this._initSearchPanel();
+    this._initSlashPanel();
     this._initCmdsPanel();
     this._initSessionsPanel();
 
@@ -1263,7 +1279,7 @@
     var toolbar = document.getElementById('mobile-toolbar');
     if (!toolbar) return;
 
-    var tabs = toolbar.querySelectorAll('.mt-mode-tab');
+    var tabs = toolbar.querySelectorAll('.mt-mode-tab[data-mode]');
     tabs.forEach(function (tab) {
       tab.addEventListener('click', function () {
         self._setToolbarMode(tab.dataset.mode);
@@ -1290,179 +1306,28 @@
       panel.classList.toggle('mt-panel-active', panel.dataset.panel === mode);
     });
 
-    // Deactivate previous mode
-    if (prev === 'search' && mode !== 'search') {
-      this._deactivateSearchMode();
-    }
-
     // Activate new mode
-    if (mode === 'search') {
-      this._activateSearchMode();
-    } else if (mode === 'cmds') {
+    if (mode === 'cmds') {
       this._activateCmdsMode();
     } else if (mode === 'sessions') {
       this._refreshSessionsPanel();
     }
   };
 
-  // --- Mobile Toolbar: Search Mode ---
+  // --- Mobile Toolbar: Slash Commands Panel ---
 
-  App.prototype._initSearchPanel = function () {
+  App.prototype._initSlashPanel = function () {
     var self = this;
-    var input = document.getElementById('mt-search-input');
-    var nextBtn = document.getElementById('mt-search-next');
-    var prevBtn = document.getElementById('mt-search-prev');
-    var regexCb = document.getElementById('mt-search-regex');
-    var caseCb = document.getElementById('mt-search-case');
-    var wholeCb = document.getElementById('mt-search-whole');
+    var toolbar = document.getElementById('mobile-toolbar');
+    if (!toolbar) return;
 
-    if (!input) return;
-
-    input.addEventListener('input', function () {
-      self._performTerminalSearch(input.value);
-    });
-
-    input.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        if (e.shiftKey) {
-          self._searchPrev();
-        } else {
-          self._searchNext();
-        }
-      } else if (e.key === 'Escape') {
-        e.preventDefault();
-        self._setToolbarMode('keys');
-      }
-    });
-
-    if (nextBtn) nextBtn.addEventListener('click', function () { self._searchNext(); });
-    if (prevBtn) prevBtn.addEventListener('click', function () { self._searchPrev(); });
-
-    function updateOption() {
-      self._searchOptions.regex = regexCb ? regexCb.checked : false;
-      self._searchOptions.caseSensitive = caseCb ? caseCb.checked : false;
-      self._searchOptions.wholeWord = wholeCb ? wholeCb.checked : false;
-      if (input.value) self._performTerminalSearch(input.value);
-    }
-
-    if (regexCb) regexCb.addEventListener('change', updateOption);
-    if (caseCb) caseCb.addEventListener('change', updateOption);
-    if (wholeCb) wholeCb.addEventListener('change', updateOption);
-  };
-
-  App.prototype._activateSearchMode = function () {
-    var input = document.getElementById('mt-search-input');
-    if (input) {
-      setTimeout(function () { input.focus(); }, 50);
-    }
-  };
-
-  App.prototype._deactivateSearchMode = function () {
-    this._clearTerminalSearch();
-    var input = document.getElementById('mt-search-input');
-    if (input) input.value = '';
-    var status = document.getElementById('mt-search-status');
-    if (status) status.textContent = '';
-  };
-
-  App.prototype._ensureSearchAddon = function (conn) {
-    if (!conn || !conn._terminal) return null;
-    if (!conn._searchAddon && window.SearchAddon) {
-      conn._searchAddon = new window.SearchAddon.SearchAddon();
-      conn._terminal.loadAddon(conn._searchAddon);
-    }
-    return conn._searchAddon;
-  };
-
-  App.prototype._performTerminalSearch = function (query) {
-    var conn = this._getActiveTerminalConnection();
-    var addon = this._ensureSearchAddon(conn);
-    var status = document.getElementById('mt-search-status');
-
-    if (!addon || !query) {
-      if (addon) addon.clearDecorations();
-      if (status) status.textContent = '';
-      return;
-    }
-
-    var opts = {
-      regex: this._searchOptions.regex,
-      caseSensitive: this._searchOptions.caseSensitive,
-      wholeWord: this._searchOptions.wholeWord,
-      incremental: true,
-      decorations: {
-        matchBackground: '#555500',
-        activeMatchBackground: '#888800',
-        matchOverviewRuler: '#888800',
-        activeMatchColorOverviewRuler: '#ffff00'
-      }
-    };
-
-    var self = this;
-    // Use the onDidChangeResults callback to update match count
-    if (!conn._searchResultsListener) {
-      conn._searchResultsListener = addon.onDidChangeResults(function (e) {
-        if (status) {
-          if (e.resultCount > 0) {
-            status.textContent = (e.resultIndex + 1) + '/' + e.resultCount;
-          } else {
-            status.textContent = 'No results';
-          }
-        }
+    var btns = toolbar.querySelectorAll('.mt-slash-btn');
+    btns.forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var text = btn.dataset.slash || btn.dataset.prompt;
+        if (text) self._typeAndSubmit(text);
       });
-    }
-
-    addon.findNext(query, opts);
-  };
-
-  App.prototype._searchNext = function () {
-    var conn = this._getActiveTerminalConnection();
-    var addon = this._ensureSearchAddon(conn);
-    var input = document.getElementById('mt-search-input');
-    if (!addon || !input || !input.value) return;
-
-    addon.findNext(input.value, {
-      regex: this._searchOptions.regex,
-      caseSensitive: this._searchOptions.caseSensitive,
-      wholeWord: this._searchOptions.wholeWord,
-      decorations: {
-        matchBackground: '#555500',
-        activeMatchBackground: '#888800',
-        matchOverviewRuler: '#888800',
-        activeMatchColorOverviewRuler: '#ffff00'
-      }
     });
-  };
-
-  App.prototype._searchPrev = function () {
-    var conn = this._getActiveTerminalConnection();
-    var addon = this._ensureSearchAddon(conn);
-    var input = document.getElementById('mt-search-input');
-    if (!addon || !input || !input.value) return;
-
-    addon.findPrevious(input.value, {
-      regex: this._searchOptions.regex,
-      caseSensitive: this._searchOptions.caseSensitive,
-      wholeWord: this._searchOptions.wholeWord,
-      decorations: {
-        matchBackground: '#555500',
-        activeMatchBackground: '#888800',
-        matchOverviewRuler: '#888800',
-        activeMatchColorOverviewRuler: '#ffff00'
-      }
-    });
-  };
-
-  App.prototype._clearTerminalSearch = function () {
-    var conn = this._getActiveTerminalConnection();
-    if (conn && conn._searchAddon) {
-      conn._searchAddon.clearDecorations();
-    }
-    if (conn && conn._searchResultsListener) {
-      conn._searchResultsListener.dispose();
-      conn._searchResultsListener = null;
-    }
   };
 
   // --- Mobile Toolbar: Cmds Mode ---
@@ -1533,7 +1398,7 @@
       el.className = 'mt-cmds-item';
       el.textContent = cmd;
       el.addEventListener('click', function () {
-        self._sendToActiveTerminal(cmd + '\n');
+        self._typeAndSubmit(cmd);
       });
       list.appendChild(el);
     });
@@ -1630,6 +1495,23 @@
     });
   };
 
+  // Type a string into the active terminal character-by-character, then
+  // press Enter.  Each character is sent as a separate WebSocket message so
+  // the PTY sees individual writes — exactly like real keyboard input.
+  // This avoids the problem where bulk text + \r in a single write gets
+  // treated as literal newlines by TUI apps (e.g. Claude Code).
+  App.prototype._typeAndSubmit = function (text) {
+    var self = this;
+    var chars = (text + '\r').split('');
+    var i = 0;
+    (function next() {
+      if (i < chars.length) {
+        self._sendToActiveTerminal(chars[i++]);
+        setTimeout(next, 10);
+      }
+    })();
+  };
+
   App.prototype._sendToActiveTerminal = function (data) {
     var activeConn = null;
 
@@ -1702,7 +1584,22 @@
 
     ws.send(JSON.stringify({ type: 'input', data: data }));
 
-    activeConn.focus();
+    if (!this._keyboardHidden) {
+      activeConn.focus();
+    }
+  };
+
+  // Toggle virtual keyboard visibility.  The static flag on TerminalConnection
+  // gates focus() and a per-textarea focus listener handles xterm.js internals.
+  App.prototype._applyKeyboardHidden = function () {
+    if (this._keyboardHidden) {
+      // Blur whatever is focused right now to dismiss the keyboard
+      if (document.activeElement) document.activeElement.blur();
+    } else {
+      // Show keyboard by focusing the active terminal
+      var conn = this._getActiveTerminalConnection();
+      if (conn) conn.focus();
+    }
   };
 
   // --- Command Palette ---
@@ -1715,7 +1612,7 @@
     this._commandPalette = new ns.CommandPalette(container);
 
     this._commandPalette.onSelect = function (command) {
-      self._sendToActiveTerminal(command + '\n');
+      self._typeAndSubmit(command);
     };
 
     // Mobile: swipe-right from left edge opens command palette
@@ -1811,8 +1708,9 @@
       toggleBtn.addEventListener('click', function () {
         ensureAudioCtx();
         self._toggleNotificationMute();
-        toggleBtn.textContent = self._notificationsMuted ? 'Muted' : 'Bell';
         toggleBtn.classList.toggle('notification-muted', self._notificationsMuted);
+        toggleBtn.querySelector('.bell-on').style.display = self._notificationsMuted ? 'none' : '';
+        toggleBtn.querySelector('.bell-off').style.display = self._notificationsMuted ? '' : 'none';
       });
     }
   };

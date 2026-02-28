@@ -57,11 +57,5 @@
       ]
     }
   },
-  "notes": [
-    {
-      "id": "new-note",
-      "name": "New Note",
-      "file": "new-note.md"
-    }
-  ]
+  "notes": []
 }

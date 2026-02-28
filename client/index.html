@@ -50,7 +50,19 @@
       <span class="title">TerminalDeck</span>
       <div id="grid-presets"></div>
       <div class="spacer"></div>
-      <button id="notification-toggle-btn" class="notification-toggle" title="Toggle notifications">Bell</button>
+      <button id="notification-toggle-btn" class="notification-toggle" title="Toggle notifications">
+        <svg class="bell-icon bell-on" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+          <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+        </svg>
+        <svg class="bell-icon bell-off" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none">
+          <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+          <path d="M18.63 13A17.89 17.89 0 0 1 18 8"/>
+          <path d="M6.26 6.26A5.86 5.86 0 0 0 6 8c0 7-3 9-3 9h14"/>
+          <path d="M18 8a6 6 0 0 0-9.33-5"/>
+          <line x1="1" y1="1" x2="23" y2="23"/>
+        </svg>
+      </button>
       <button id="add-terminal-btn">+</button>
       <div id="connection-status" class="status-indicator"></div>
     </header>
@@ -76,9 +88,10 @@
     <div class="mobile-toolbar-handle"></div>
     <div class="mt-mode-tabs">
       <button class="mt-mode-tab mt-mode-tab-active" data-mode="keys">Keys</button>
-      <button class="mt-mode-tab" data-mode="search">Search</button>
+      <button class="mt-mode-tab" data-mode="slash">Slash</button>
       <button class="mt-mode-tab" data-mode="cmds">Cmds</button>
       <button class="mt-mode-tab" data-mode="sessions">Sessions</button>
+      <button class="mt-mode-tab mt-kb-toggle" id="mt-kb-toggle" title="Toggle keyboard">&#x2328;</button>
     </div>
     <!-- Keys panel (existing keyboard buttons) -->
     <div class="mt-panel mt-panel-active" data-panel="keys">
@@ -100,16 +113,16 @@
       <button class="mobile-toolbar-btn" data-key="down">&#x2193;</button>
       <button class="mobile-toolbar-btn" data-key="right">&#x2192;</button>
       <button class="mobile-toolbar-btn" data-key="pgdn">pgdn</button>
-      <!-- Row 3 (expanded) -->
-      <button class="mobile-toolbar-btn mobile-toolbar-extra" data-key="colon">:</button>
-      <button class="mobile-toolbar-btn mobile-toolbar-extra" data-key="semicolon">;</button>
-      <button class="mobile-toolbar-btn mobile-toolbar-extra" data-key="backslash">\</button>
-      <button class="mobile-toolbar-btn mobile-toolbar-extra" data-key="singlequote">'</button>
-      <button class="mobile-toolbar-btn mobile-toolbar-extra" data-key="doublequote">"</button>
+      <!-- Row 3 (expanded): numbers + action keys -->
+      <button class="mobile-toolbar-btn mobile-toolbar-extra" data-key="1">1</button>
+      <button class="mobile-toolbar-btn mobile-toolbar-extra" data-key="2">2</button>
+      <button class="mobile-toolbar-btn mobile-toolbar-extra" data-key="3">3</button>
+      <button class="mobile-toolbar-btn mobile-toolbar-extra" data-key="4">4</button>
+      <button class="mobile-toolbar-btn mobile-toolbar-extra" data-key="5">5</button>
+      <button class="mobile-toolbar-btn mobile-toolbar-extra" data-key="enter">enter</button>
       <button class="mobile-toolbar-btn mobile-toolbar-extra" data-key="bang">!</button>
-      <button class="mobile-toolbar-btn mobile-toolbar-extra" data-key="ampersand">&amp;</button>
-      <button class="mobile-toolbar-btn mobile-toolbar-extra" data-key="dollar">$</button>
-      <!-- Row 4 (expanded) -->
+      <button class="mobile-toolbar-btn mobile-toolbar-extra" data-key="colon">:</button>
+      <!-- Row 4 (expanded): paired brackets -->
       <button class="mobile-toolbar-btn mobile-toolbar-extra" data-key="lparen">(</button>
       <button class="mobile-toolbar-btn mobile-toolbar-extra" data-key="rparen">)</button>
       <button class="mobile-toolbar-btn mobile-toolbar-extra" data-key="lbracket">[</button>
@@ -119,18 +132,29 @@
       <button class="mobile-toolbar-btn mobile-toolbar-extra" data-key="lt">&lt;</button>
       <button class="mobile-toolbar-btn mobile-toolbar-extra" data-key="gt">&gt;</button>
     </div>
-    <!-- Search panel -->
-    <div class="mt-panel" data-panel="search">
-      <div class="mt-search-row">
-        <input id="mt-search-input" class="mt-search-input" type="text" placeholder="Find in terminal..." autocomplete="off">
-        <button id="mt-search-prev" class="mt-search-btn" title="Previous">&#x2191;</button>
-        <button id="mt-search-next" class="mt-search-btn" title="Next">&#x2193;</button>
-      </div>
-      <div class="mt-search-options">
-        <label class="mt-search-toggle"><input type="checkbox" id="mt-search-regex"> Regex</label>
-        <label class="mt-search-toggle"><input type="checkbox" id="mt-search-case"> Case</label>
-        <label class="mt-search-toggle"><input type="checkbox" id="mt-search-whole"> Word</label>
-        <span id="mt-search-status" class="mt-search-status"></span>
+    <!-- Slash commands panel -->
+    <div class="mt-panel" data-panel="slash">
+      <div class="mt-slash-grid">
+        <!-- Row 1: navigation & context -->
+        <button class="mt-slash-btn" data-slash="/clear">clear</button>
+        <button class="mt-slash-btn" data-slash="/compact">compact</button>
+        <button class="mt-slash-btn" data-slash="/status">status</button>
+        <button class="mt-slash-btn" data-slash="/help">help</button>
+        <!-- Row 2: actions -->
+        <button class="mt-slash-btn" data-slash="/commit">commit</button>
+        <button class="mt-slash-btn" data-slash="/review">review</button>
+        <button class="mt-slash-btn" data-slash="/fast">fast</button>
+        <button class="mt-slash-btn" data-slash="/exit">exit</button>
+        <!-- Row 3 (expanded): common prompts -->
+        <button class="mt-slash-btn mt-slash-extra" data-prompt="commit and push">commit &amp; push</button>
+        <button class="mt-slash-btn mt-slash-extra" data-prompt="run tests">run tests</button>
+        <button class="mt-slash-btn mt-slash-extra" data-prompt="git status">git status</button>
+        <button class="mt-slash-btn mt-slash-extra" data-prompt="git log --oneline -10">git log</button>
+        <!-- Row 4 (expanded): more prompts -->
+        <button class="mt-slash-btn mt-slash-extra" data-prompt="explain this error">explain error</button>
+        <button class="mt-slash-btn mt-slash-extra" data-prompt="fix the bug">fix bug</button>
+        <button class="mt-slash-btn mt-slash-extra" data-prompt="summarize changes">summarize</button>
+        <button class="mt-slash-btn mt-slash-extra" data-prompt="undo last change">undo</button>
       </div>
     </div>
     <!-- Cmds panel -->
@@ -149,7 +173,6 @@
 
   <script src="vendor/xterm.js"></script>
   <script src="vendor/xterm-addon-fit.js"></script>
-  <script src="vendor/xterm-addon-search.js"></script>
   <script src="vendor/fuse.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script src="js/terminal.js"></script>

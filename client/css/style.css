@@ -1454,6 +1454,19 @@ body.toolbar-collapsed #main-content {
   background: rgba(10, 189, 198, 0.12);
 }
 
+/* Keyboard toggle button */
+.mt-kb-toggle {
+  flex: 0 0 28px;
+  font-size: 14px;
+}
+
+.mt-kb-toggle.kb-hidden {
+  color: var(--td-text-dim);
+  border-color: var(--td-red, #e74856);
+  background: rgba(231, 72, 86, 0.12);
+  opacity: 0.7;
+}
+
 /* Hide tabs when collapsed */
 #mobile-toolbar.collapsed .mt-mode-tabs {
   display: none;
@@ -1477,14 +1490,64 @@ body.toolbar-collapsed #main-content {
   display: none;
 }
 
-/* === Search Panel === */
-.mt-search-row {
-  display: flex;
+/* === Slash Commands Panel === */
+.mt-slash-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
   width: 100%;
-  gap: 4px;
-  align-items: center;
 }
 
+.mt-slash-btn {
+  height: 34px;
+  padding: 0 4px;
+  font-family: var(--td-font-terminal);
+  font-size: 12px;
+  color: var(--td-cyan);
+  background: rgba(10, 189, 198, 0.06);
+  border: 1px solid rgba(10, 189, 198, 0.2);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.1s ease;
+  -webkit-tap-highlight-color: transparent;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mt-slash-btn[data-slash]::before {
+  content: '/';
+  color: var(--td-text-dim);
+}
+
+.mt-slash-btn:active {
+  background: rgba(10, 189, 198, 0.25);
+  border-color: var(--td-cyan);
+}
+
+/* Prompt buttons: different accent to distinguish from slash cmds */
+.mt-slash-btn[data-prompt] {
+  color: var(--td-text);
+  background: rgba(255, 255, 255, 0.06);
+  border-color: var(--td-border);
+}
+
+.mt-slash-btn[data-prompt]:active {
+  color: var(--td-cyan);
+  background: rgba(10, 189, 198, 0.25);
+  border-color: var(--td-cyan);
+}
+
+/* Extra rows: hidden by default, shown when toolbar is expanded */
+.mt-slash-extra {
+  display: none;
+}
+
+#mobile-toolbar.expanded .mt-slash-extra {
+  display: block;
+}
+
+/* === Filter Input (shared by Cmds panel) === */
 .mt-search-input {
   flex: 1;
   min-width: 0;
@@ -1505,57 +1568,6 @@ body.toolbar-collapsed #main-content {
 }
 
 .mt-search-input::placeholder {
-  color: var(--td-text-dim);
-}
-
-.mt-search-btn {
-  width: 34px;
-  height: 34px;
-  flex-shrink: 0;
-  padding: 0;
-  font-size: 16px;
-  color: var(--td-text);
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid var(--td-border);
-  border-radius: 4px;
-  cursor: pointer;
-  transition: all 0.1s ease;
-  -webkit-tap-highlight-color: transparent;
-}
-
-.mt-search-btn:active {
-  background: rgba(10, 189, 198, 0.25);
-  border-color: var(--td-cyan);
-}
-
-.mt-search-options {
-  display: flex;
-  width: 100%;
-  gap: 10px;
-  align-items: center;
-  padding: 2px 0;
-}
-
-.mt-search-toggle {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-family: var(--td-font-terminal);
-  font-size: 11px;
-  color: var(--td-text-dim);
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
-}
-
-.mt-search-toggle input[type="checkbox"] {
-  margin: 0;
-  accent-color: var(--td-cyan);
-}
-
-.mt-search-status {
-  margin-left: auto;
-  font-family: var(--td-font-terminal);
-  font-size: 11px;
   color: var(--td-text-dim);
 }
 
@@ -1865,9 +1877,9 @@ body.toolbar-collapsed #main-content {
   width: 30px;
   height: 30px;
   padding: 0;
-  font-size: 11px;
-  font-family: var(--td-font-terminal);
-  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   color: var(--td-color);
   background: transparent;
   border: 1px solid var(--td-border);
@@ -1875,6 +1887,10 @@ body.toolbar-collapsed #main-content {
   cursor: pointer;
   transition: all 0.15s ease;
   flex-shrink: 0;
+}
+
+.bell-icon {
+  display: block;
 }
 
 .notification-toggle:hover {
