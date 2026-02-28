@@ -50,6 +50,26 @@
     // Open terminal in element
     this._terminal.open(el);
 
+    // Prevent mobile input duplication: on Android, xterm.js's hidden
+    // textarea grows with every word. When autocorrect modifies already-
+    // sent text, xterm.js's _handleAnyTextareaChanges can re-send the
+    // entire accumulated content. Clear the textarea after each composition
+    // completes so the blast radius is at most one word.
+    var textarea = this._terminal.textarea;
+    if (textarea) {
+      var term = this._terminal;
+      textarea.addEventListener('compositionend', function () {
+        setTimeout(function () {
+          var ch = term._compositionHelper
+            || (term._core && term._core._compositionHelper);
+          if (ch && !ch.isComposing && !ch._isSendingComposition) {
+            textarea.value = '';
+            ch._compositionPosition = { start: 0, end: 0 };
+            ch._dataAlreadySent = '';
+          }
+        }, 100);
+      });
+    }
 
     // Defer fit() until the browser has completed a full rendering cycle.
     // A single requestAnimationFrame is NOT enough — rAF fires BEFORE the
