@@ -20,11 +20,16 @@ class NoteManager {
   }
 
   _isPathSafe(file) {
+    if (file.startsWith('/')) {
+      const resolved = path.resolve(file);
+      return resolved.startsWith('/workspace/');
+    }
     const resolved = path.resolve(this._notesDir, file);
     return resolved.startsWith(this._notesDir + path.sep) || resolved === this._notesDir;
   }
 
   _fullPath(file) {
+    if (file.startsWith('/')) return file;
     return path.join(this._notesDir, file);
   }
 
@@ -139,13 +144,46 @@ class NoteManager {
     return newNote;
   }
 
+  openFile(workspaceRelPath) {
+    var absPath = path.resolve('/workspace', workspaceRelPath);
+    if (!absPath.startsWith('/workspace/')) return null;
+
+    // Return existing note if this file is already tracked
+    var notes = this._getNotes();
+    var existing = notes.find(function (n) { return n.file === absPath; });
+    if (existing) return existing;
+
+    var baseName = path.basename(workspaceRelPath, '.md');
+    var slug = baseName.toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '') || 'file';
+
+    var existingIds = new Set(notes.map(function (n) { return n.id; }));
+    var id = slug;
+    var counter = 2;
+    while (existingIds.has(id)) {
+      id = slug + '-' + counter;
+      counter++;
+    }
+
+    var newNote = { id: id, name: path.basename(workspaceRelPath), file: absPath };
+    var updatedNotes = notes.slice();
+    updatedNotes.push(newNote);
+    this._saveConfig(updatedNotes);
+
+    return newNote;
+  }
+
   deleteNote(id, deleteFile) {
     var note = this._findNote(id);
     if (!note) return null;
 
     var notes = this._getNotes().filter(function (n) { return n.id !== id; });
 
-    if (deleteFile && this._isPathSafe(note.file)) {
+    // Only delete the underlying file for managed notes (relative paths inside
+    // the notes dir).  Workspace files opened via the file explorer use absolute
+    // paths and must not be deleted when the note entry is removed.
+    if (deleteFile && !note.file.startsWith('/') && this._isPathSafe(note.file)) {
       var filePath = this._fullPath(note.file);
       try {
         fs.unlinkSync(filePath);

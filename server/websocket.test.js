@@ -7,22 +7,20 @@ const { TerminalWSServer } = require('./websocket');
 const { SessionManager } = require('./sessions');
 
 function cleanupTmuxSessions() {
-  // Clean up on both the default socket and the dedicated terminaldeck socket
-  for (const socketFlag of ['', '-L terminaldeck']) {
-    try {
-      const cmd = `tmux ${socketFlag} list-sessions -F "#{session_name}" 2>/dev/null`.replace(/  +/g, ' ').trim();
-      const output = execSync(cmd, { encoding: 'utf-8' });
-      output
-        .trim()
-        .split('\n')
-        .filter((s) => s.startsWith('terminaldeck-'))
-        .forEach((s) => {
-          try {
-            execSync(`tmux ${socketFlag} kill-session -t "${s}" 2>/dev/null`.replace(/  +/g, ' ').trim());
-          } catch {}
-        });
-    } catch {}
-  }
+  try {
+    const output = execSync('tmux -L terminaldeck-test list-sessions -F "#{session_name}" 2>/dev/null', {
+      encoding: 'utf-8'
+    });
+    output
+      .trim()
+      .split('\n')
+      .filter((s) => s.startsWith('terminaldeck-test-'))
+      .forEach((s) => {
+        try {
+          execSync(`tmux -L terminaldeck-test kill-session -t "${s}" 2>/dev/null`);
+        } catch {}
+      });
+  } catch {}
 }
 
 describe('TerminalWSServer', function () {
@@ -34,7 +32,9 @@ describe('TerminalWSServer', function () {
   let port;
 
   const testConfig = {
-    settings: { shell: '/bin/bash' }
+    settings: { shell: '/bin/bash' },
+    tmuxSocket: 'terminaldeck-test',
+    sessionPrefix: 'terminaldeck-test-'
   };
 
   beforeEach(async () => {
@@ -273,7 +273,7 @@ describe('TerminalWSServer', function () {
 
       // tmux session should still exist
       try {
-        execSync(`tmux -L terminaldeck has-session -t terminaldeck-${result.id} 2>/dev/null`);
+        execSync(`tmux -L terminaldeck-test has-session -t terminaldeck-test-${result.id} 2>/dev/null`);
       } catch {
         throw new Error('tmux session was killed on disconnect');
       }

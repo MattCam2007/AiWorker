@@ -18,16 +18,16 @@ function tmuxAvailable() {
 
 function cleanupTmuxSessions() {
   try {
-    const output = execSync('tmux list-sessions -F "#{session_name}" 2>/dev/null', {
+    const output = execSync('tmux -L terminaldeck-test list-sessions -F "#{session_name}" 2>/dev/null', {
       encoding: 'utf-8'
     });
     output
       .trim()
       .split('\n')
-      .filter((s) => s.startsWith('terminaldeck-'))
+      .filter((s) => s.startsWith('terminaldeck-test-'))
       .forEach((s) => {
         try {
-          execSync(`tmux kill-session -t "${s}" 2>/dev/null`);
+          execSync(`tmux -L terminaldeck-test kill-session -t "${s}" 2>/dev/null`);
         } catch {}
       });
   } catch {}
@@ -125,7 +125,7 @@ describe('Integration Tests', function () {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'terminaldeck-int-'));
     configPath = path.join(tmpDir, 'terminaldeck.json');
     writeConfig(testConfig);
-    app = await createApp({ configPath, port: 0 });
+    app = await createApp({ configPath, port: 0, tmuxSocket: 'terminaldeck-test', sessionPrefix: 'terminaldeck-test-' });
   });
 
   afterEach(async function () {
@@ -266,11 +266,11 @@ describe('Integration Tests', function () {
   describe('Session discovery', () => {
     it('discovers pre-existing tmux sessions on startup', async () => {
       // Create a tmux session manually before starting a new app instance
-      execSync('tmux new-session -d -s terminaldeck-discovered /bin/bash');
+      execSync('tmux -L terminaldeck-test new-session -d -s terminaldeck-test-discovered /bin/bash');
 
       // Close and restart app
       await app.close();
-      app = await createApp({ configPath, port: 0 });
+      app = await createApp({ configPath, port: 0, tmuxSocket: 'terminaldeck-test', sessionPrefix: 'terminaldeck-test-' });
 
       const sessionsRes = await httpGet(app.port, '/api/sessions');
       const sessions = JSON.parse(sessionsRes.body);

@@ -14,9 +14,13 @@
       headerColor: null
     };
     this.type = 'note';
-    this._easyMDE = null;
+    this._textarea = null;
+    this._previewEl = null;
+    this._editTab = null;
+    this._previewTab = null;
     this._element = null;
     this._wrapper = null;
+    this._mode = 'edit';
     this._dirty = false;
     this._saving = false;
     this._autosaveTimer = null;
@@ -31,48 +35,39 @@
   NotePanel.prototype.mount = function (el) {
     this._element = el;
 
-    // Create wrapper
     var wrapper = document.createElement('div');
     wrapper.className = 'note-panel-wrapper';
     el.appendChild(wrapper);
     this._wrapper = wrapper;
 
-    // Create textarea
+    // Toolbar
+    wrapper.appendChild(this._buildToolbar());
+
+    // Editor area (holds textarea + preview, fills remaining height)
+    var editorArea = document.createElement('div');
+    editorArea.className = 'np-editor-area';
+    wrapper.appendChild(editorArea);
+    this._editorArea = editorArea;
+
+    // Textarea
     var textarea = document.createElement('textarea');
-    wrapper.appendChild(textarea);
+    textarea.className = 'np-textarea';
+    textarea.spellcheck = false;
+    textarea.autocomplete = 'off';
+    textarea.autocorrect = 'off';
+    textarea.autocapitalize = 'off';
+    editorArea.appendChild(textarea);
+    this._textarea = textarea;
 
-    // Initialize EasyMDE
+    // Preview pane
+    var preview = document.createElement('div');
+    preview.className = 'np-preview np-hidden';
+    editorArea.appendChild(preview);
+    this._previewEl = preview;
+
+    // Wire events
     var self = this;
-    this._easyMDE = new EasyMDE({
-      element: textarea,
-      autofocus: false,
-      spellChecker: false,
-      status: false,
-      toolbar: [
-        'bold', 'italic', 'heading', 'quote',
-        'unordered-list', 'ordered-list', 'link',
-        '|',
-        'preview', 'side-by-side',
-        '|',
-        {
-          name: 'save',
-          action: function () { self.save(); },
-          className: 'fa fa-floppy-o',
-          title: 'Save (Ctrl+S)'
-        }
-      ],
-      previewRender: function (plainText) {
-        // Use EasyMDE's built-in marked if available
-        if (typeof marked !== 'undefined') {
-          return marked.parse ? marked.parse(plainText) : marked(plainText);
-        }
-        // Fallback: escape HTML and convert newlines
-        return plainText.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
-      }
-    });
-
-    // Track changes for dirty state
-    this._easyMDE.codemirror.on('change', function () {
+    textarea.addEventListener('input', function () {
       if (!self._dirty) {
         self._dirty = true;
         if (self._onDirtyChange) self._onDirtyChange(true);
@@ -80,15 +75,147 @@
       self._scheduleAutosave();
     });
 
-    // Ctrl+S to save
-    if (this._easyMDE.codemirror.addKeyMap) {
-      this._easyMDE.codemirror.addKeyMap({
-        'Ctrl-S': function () { self.save(); }
+    textarea.addEventListener('keydown', function (e) {
+      if (e.ctrlKey && e.key === 's') {
+        e.preventDefault();
+        self.save();
+        return;
+      }
+      // Tab → 2 spaces
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        var start = textarea.selectionStart;
+        var end = textarea.selectionEnd;
+        textarea.value = textarea.value.substring(0, start) + '  ' + textarea.value.substring(end);
+        textarea.selectionStart = textarea.selectionEnd = start + 2;
+        textarea.dispatchEvent(new Event('input'));
+      }
+    });
+
+    this._loadContent();
+  };
+
+  NotePanel.prototype._buildToolbar = function () {
+    var self = this;
+    var bar = document.createElement('div');
+    bar.className = 'np-toolbar';
+
+    function btn(label, title, fn, extraClass) {
+      var b = document.createElement('button');
+      b.className = 'np-btn' + (extraClass ? ' ' + extraClass : '');
+      b.textContent = label;
+      b.title = title;
+      b.type = 'button';
+      b.addEventListener('mousedown', function (e) {
+        // Prevent textarea from losing focus
+        e.preventDefault();
       });
+      b.addEventListener('click', fn);
+      return b;
     }
 
-    // Fetch content
-    this._loadContent();
+    function sep() {
+      var s = document.createElement('span');
+      s.className = 'np-sep';
+      return s;
+    }
+
+    // Wrap selection with before/after
+    function wrapSel(before, after) {
+      return function () {
+        var ta = self._textarea;
+        var start = ta.selectionStart;
+        var end = ta.selectionEnd;
+        var sel = ta.value.substring(start, end) || 'text';
+        var repl = before + sel + (after !== undefined ? after : before);
+        ta.value = ta.value.substring(0, start) + repl + ta.value.substring(end);
+        ta.selectionStart = start + before.length;
+        ta.selectionEnd = start + before.length + sel.length;
+        ta.dispatchEvent(new Event('input'));
+      };
+    }
+
+    // Prepend prefix to current line
+    function prependLine(prefix) {
+      return function () {
+        var ta = self._textarea;
+        var start = ta.selectionStart;
+        var lineStart = ta.value.lastIndexOf('\n', start - 1) + 1;
+        ta.value = ta.value.substring(0, lineStart) + prefix + ta.value.substring(lineStart);
+        ta.selectionStart = ta.selectionEnd = start + prefix.length;
+        ta.dispatchEvent(new Event('input'));
+      };
+    }
+
+    // Insert text at cursor, optional cursor offset inside inserted text
+    function insertAt(text, cursorOffset) {
+      return function () {
+        var ta = self._textarea;
+        var start = ta.selectionStart;
+        ta.value = ta.value.substring(0, start) + text + ta.value.substring(start);
+        ta.selectionStart = ta.selectionEnd = start + (cursorOffset !== undefined ? cursorOffset : text.length);
+        ta.dispatchEvent(new Event('input'));
+      };
+    }
+
+    var tableSnippet = '\n| Col 1 | Col 2 | Col 3 |\n|-------|-------|-------|\n| cell  | cell  | cell  |\n';
+
+    bar.appendChild(btn('B',   'Bold',          wrapSel('**')));
+    bar.appendChild(btn('I',   'Italic',         wrapSel('_')));
+    bar.appendChild(btn('H',   'Heading',        prependLine('## ')));
+    bar.appendChild(btn('`',   'Inline code',    wrapSel('`')));
+    bar.appendChild(btn('```', 'Code block',     insertAt('\n```\n\n```\n', 5)));
+    bar.appendChild(btn('•',   'Bullet list',    prependLine('- ')));
+    bar.appendChild(btn('1.',  'Numbered list',  prependLine('1. ')));
+    bar.appendChild(btn('"',   'Blockquote',     prependLine('> ')));
+    bar.appendChild(btn('⊞',   'Insert table',   insertAt(tableSnippet, 3)));
+    bar.appendChild(btn('—',   'Horizontal rule', insertAt('\n---\n')));
+    bar.appendChild(btn('[]',  'Link',           wrapSel('[', '](url)')));
+    bar.appendChild(sep());
+
+    // Edit / Preview tabs
+    var editTab = btn('Edit', 'Edit mode', function () { self._setMode('edit'); }, 'np-tab-btn np-tab-active');
+    var previewTab = btn('Preview', 'Preview mode', function () { self._setMode('preview'); }, 'np-tab-btn');
+    self._editTab = editTab;
+    self._previewTab = previewTab;
+    bar.appendChild(editTab);
+    bar.appendChild(previewTab);
+    bar.appendChild(sep());
+
+    var saveBtn = btn('Save', 'Save (Ctrl+S)', function () { self.save(); }, 'np-save-btn');
+    bar.appendChild(saveBtn);
+
+    return bar;
+  };
+
+  NotePanel.prototype._setMode = function (mode) {
+    this._mode = mode;
+    if (mode === 'preview') {
+      this._renderPreview();
+      this._textarea.classList.add('np-hidden');
+      this._previewEl.classList.remove('np-hidden');
+      this._editTab.classList.remove('np-tab-active');
+      this._previewTab.classList.add('np-tab-active');
+    } else {
+      this._textarea.classList.remove('np-hidden');
+      this._previewEl.classList.add('np-hidden');
+      this._editTab.classList.add('np-tab-active');
+      this._previewTab.classList.remove('np-tab-active');
+      this._textarea.focus();
+    }
+  };
+
+  NotePanel.prototype._renderPreview = function () {
+    var md = this._textarea ? this._textarea.value : '';
+    if (typeof marked !== 'undefined') {
+      var html = typeof marked.parse === 'function'
+        ? marked.parse(md, { gfm: true, breaks: true })
+        : marked(md, { gfm: true, breaks: true });
+      this._previewEl.innerHTML = html;
+    } else {
+      // Bare fallback
+      this._previewEl.textContent = md;
+    }
   };
 
   NotePanel.prototype._loadContent = function () {
@@ -96,8 +223,8 @@
     fetch('/api/notes/' + this.id)
       .then(function (res) { return res.json(); })
       .then(function (data) {
-        if (self._easyMDE && data.content !== undefined) {
-          self._easyMDE.value(data.content);
+        if (self._textarea && data.content !== undefined) {
+          self._textarea.value = data.content;
           self._lastSavedContent = data.content;
           self._dirty = false;
         }
@@ -111,16 +238,14 @@
     var self = this;
     if (this._autosaveTimer) clearTimeout(this._autosaveTimer);
     this._autosaveTimer = setTimeout(function () {
-      if (self._dirty && !self._saving) {
-        self.save();
-      }
+      if (self._dirty && !self._saving) self.save();
     }, AUTOSAVE_DELAY);
   };
 
   NotePanel.prototype.save = function () {
-    if (!this._easyMDE) return Promise.resolve();
+    if (!this._textarea) return Promise.resolve();
 
-    var content = this._easyMDE.value();
+    var content = this._textarea.value;
     if (content === this._lastSavedContent) {
       this._dirty = false;
       if (this._onDirtyChange) this._onDirtyChange(false);
@@ -154,22 +279,19 @@
       clearTimeout(this._autosaveTimer);
       this._autosaveTimer = null;
     }
-    if (this._easyMDE) {
-      try { this._easyMDE.toTextArea(); } catch (e) {}
-      this._easyMDE = null;
-    }
     if (this._wrapper && this._wrapper.parentNode) {
       this._wrapper.parentNode.removeChild(this._wrapper);
     }
+    this._textarea = null;
+    this._previewEl = null;
+    this._editTab = null;
+    this._previewTab = null;
     this._wrapper = null;
     this._element = null;
   };
 
   NotePanel.prototype.detach = function () {
-    // Save unsaved changes before detaching
-    if (this._dirty && this._easyMDE) {
-      this.save();
-    }
+    if (this._dirty && this._textarea) this.save();
     this.unmount();
   };
 
@@ -178,24 +300,17 @@
   };
 
   NotePanel.prototype.resize = function () {
-    if (this._easyMDE && this._easyMDE.codemirror) {
-      this._easyMDE.codemirror.refresh();
-    }
+    // textarea resizes naturally; no-op
   };
 
-  NotePanel.prototype.refit = function () {
-    this.resize();
-  };
+  NotePanel.prototype.refit = function () {};
 
   NotePanel.prototype.focus = function () {
-    if (this._easyMDE && this._easyMDE.codemirror) {
-      this._easyMDE.codemirror.focus();
-    }
+    if (this._textarea && this._mode === 'edit') this._textarea.focus();
   };
 
   NotePanel.prototype.getContent = function () {
-    if (!this._easyMDE) return '';
-    return this._easyMDE.value();
+    return this._textarea ? this._textarea.value : '';
   };
 
   NotePanel.prototype.isDirty = function () {
@@ -203,7 +318,7 @@
   };
 
   NotePanel.prototype.isActive = function () {
-    return this._easyMDE !== null;
+    return this._textarea !== null;
   };
 
   NotePanel.prototype.destroy = function () {
@@ -211,14 +326,10 @@
     this.detach();
   };
 
-  NotePanel.prototype.refresh = function () {
-    this.resize();
-  };
+  NotePanel.prototype.refresh = function () {};
 
   NotePanel.prototype.moveTo = function (newMount) {
-    if (this._wrapper) {
-      newMount.appendChild(this._wrapper);
-    }
+    if (this._wrapper) newMount.appendChild(this._wrapper);
     this._element = newMount;
   };
 

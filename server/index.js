@@ -82,6 +82,10 @@ async function createApp(options = {}) {
   const configManager = new ConfigManager(configPath);
   const config = configManager.load();
 
+  // Allow overriding tmux socket/prefix (used by tests for isolation)
+  if (options.tmuxSocket) config.tmuxSocket = options.tmuxSocket;
+  if (options.sessionPrefix) config.sessionPrefix = options.sessionPrefix;
+
   const historyFilePath = getHistoryFilePath(config.settings.shell);
   const historyRoute = createHistoryRoute(historyFilePath);
 
@@ -169,6 +173,20 @@ async function createApp(options = {}) {
           setSecurityHeaders(res);
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'Invalid JSON' }));
+          return;
+        }
+        // Open an existing workspace file as a note
+        if (data.filePath && typeof data.filePath === 'string') {
+          var note = noteManager.openFile(data.filePath);
+          if (!note) {
+            setSecurityHeaders(res);
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Invalid file path' }));
+            return;
+          }
+          setSecurityHeaders(res);
+          res.writeHead(201, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(note));
           return;
         }
         if (!data.name || typeof data.name !== 'string') {

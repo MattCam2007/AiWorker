@@ -11,7 +11,10 @@ const DEFAULT_SETTINGS = {
     fontSize: 14
   },
   shell: '/bin/bash',
-  promptPattern: '\\$\\s*$'
+  notification: {
+    frequency: 830,
+    duration: 0.3
+  }
 };
 
 class ConfigManager extends EventEmitter {
@@ -133,9 +136,6 @@ class ConfigManager extends EventEmitter {
       }
       if (s.shell !== undefined && typeof s.shell !== 'string') {
         throw new Error('settings.shell must be a string');
-      }
-      if (s.promptPattern !== undefined && typeof s.promptPattern !== 'string') {
-        throw new Error('settings.promptPattern must be a string');
       }
     }
 

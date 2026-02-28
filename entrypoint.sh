@@ -55,6 +55,31 @@ if [ ! -f "$USER_HOME/.local/bin/claude" ]; then
     fi
 fi
 
+# Configure Claude Code hooks to emit terminal bell (\a) for TerminalDeck notifications.
+# Stop = Claude finished responding, Notification = Claude needs attention.
+# Writes to /dev/tty so the BEL reaches the PTY (hook stdout is captured by Claude).
+CLAUDE_SETTINGS="$USER_HOME/.claude/settings.json"
+if [ -f "$USER_HOME/.local/bin/claude" ]; then
+    mkdir -p "$USER_HOME/.claude"
+    if [ ! -f "$CLAUDE_SETTINGS" ]; then
+        echo '{}' > "$CLAUDE_SETTINGS"
+    fi
+    # Add Stop and Notification hooks if not already configured
+    if ! grep -q '"Stop"' "$CLAUDE_SETTINGS" 2>/dev/null || ! grep -q '"Notification"' "$CLAUDE_SETTINGS" 2>/dev/null; then
+        node -e "
+          const fs = require('fs');
+          const f = '$CLAUDE_SETTINGS';
+          const cfg = JSON.parse(fs.readFileSync(f, 'utf8'));
+          cfg.hooks = cfg.hooks || {};
+          const bellHook = [{ matcher: '', hooks: [{ type: 'command', command: \"printf '\\\\a' > /dev/tty\" }] }];
+          if (!cfg.hooks.Stop) cfg.hooks.Stop = bellHook;
+          if (!cfg.hooks.Notification) cfg.hooks.Notification = bellHook;
+          fs.writeFileSync(f, JSON.stringify(cfg, null, 2) + '\n');
+        " 2>/dev/null || true
+    fi
+    chown "$PUID:$PGID" "$CLAUDE_SETTINGS"
+fi
+
 # Fix ownership - top-level only (no recursive on /app to avoid slow node_modules chown)
 chown "$PUID:$PGID" /app
 chown -R "$PUID:$PGID" /app/config

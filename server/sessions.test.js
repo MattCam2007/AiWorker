@@ -14,22 +14,20 @@ function tmuxAvailable() {
 }
 
 function cleanupTmuxSessions() {
-  // Clean up on both the default socket and the dedicated terminaldeck socket
-  for (const socketFlag of ['', '-L terminaldeck']) {
-    try {
-      const cmd = `tmux ${socketFlag} list-sessions -F "#{session_name}" 2>/dev/null`.replace(/  +/g, ' ').trim();
-      const output = execSync(cmd, { encoding: 'utf-8' });
-      output
-        .trim()
-        .split('\n')
-        .filter((s) => s.startsWith('terminaldeck-'))
-        .forEach((s) => {
-          try {
-            execSync(`tmux ${socketFlag} kill-session -t "${s}" 2>/dev/null`.replace(/  +/g, ' ').trim());
-          } catch {}
-        });
-    } catch {}
-  }
+  try {
+    const output = execSync('tmux -L terminaldeck-test list-sessions -F "#{session_name}" 2>/dev/null', {
+      encoding: 'utf-8'
+    });
+    output
+      .trim()
+      .split('\n')
+      .filter((s) => s.startsWith('terminaldeck-test-'))
+      .forEach((s) => {
+        try {
+          execSync(`tmux -L terminaldeck-test kill-session -t "${s}" 2>/dev/null`);
+        } catch {}
+      });
+  } catch {}
 }
 
 describe('SessionManager', function () {
@@ -45,7 +43,9 @@ describe('SessionManager', function () {
   this.timeout(15000);
 
   const testConfig = {
-    settings: { shell: '/bin/bash' }
+    settings: { shell: '/bin/bash' },
+    tmuxSocket: 'terminaldeck-test',
+    sessionPrefix: 'terminaldeck-test-'
   };
 
   beforeEach(function () {
@@ -85,7 +85,7 @@ describe('SessionManager', function () {
     it('discovers existing terminaldeck tmux sessions', async () => {
       // Create a tmux session manually with the terminaldeck- prefix
       const id = 'discover-test-1';
-      execSync(`tmux -L terminaldeck new-session -d -s terminaldeck-${id} /bin/bash`);
+      execSync(`tmux -L terminaldeck-test new-session -d -s terminaldeck-test-${id} /bin/bash`);
 
       const mgr = new SessionManager(testConfig);
       await mgr.discoverSessions();

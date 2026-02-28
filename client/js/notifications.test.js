@@ -64,6 +64,8 @@ describe('Notifications — Frontend', function () {
     window.AudioContext = function () {
       this.currentTime = 0;
       this.destination = {};
+      this.state = 'running';
+      this.resume = sinon.stub().resolves();
       this.createOscillator = function () {
         return {
           connect: sinon.stub(),
@@ -224,6 +226,10 @@ describe('Notifications — Frontend', function () {
       return app.init().then(function () {
         return new Promise(function (resolve) { setTimeout(resolve, 10); });
       }).then(function () {
+        // Simulate user interaction to unlock AudioContext
+        document.dispatchEvent(new window.Event('click'));
+        expect(app._audioCtx).to.not.be.null;
+
         // Spy on the _playDing method
         var playSpy = sinon.spy(app, '_playDing');
 

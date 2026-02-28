@@ -5,7 +5,7 @@ const path = require('path');
 const os = require('os');
 const { ConfigManager } = require('./config');
 
-describe('Notifications — Config (promptPattern)', () => {
+describe('Notifications — Config', () => {
   let tmpDir;
   let configPath;
 
@@ -22,30 +22,17 @@ describe('Notifications — Config (promptPattern)', () => {
     fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2));
   }
 
-  it('applies default promptPattern when not specified', () => {
+  it('loads config with default settings when none specified', () => {
     writeConfig({ settings: {} });
     const mgr = new ConfigManager(configPath);
     const cfg = mgr.load();
-    expect(cfg.settings.promptPattern).to.equal('\\$\\s*$');
+    expect(cfg.settings.shell).to.equal('/bin/bash');
   });
 
-  it('preserves custom promptPattern when specified', () => {
-    writeConfig({ settings: { promptPattern: '%\\s*$' } });
+  it('preserves custom settings when specified', () => {
+    writeConfig({ settings: { shell: '/bin/zsh' } });
     const mgr = new ConfigManager(configPath);
     const cfg = mgr.load();
-    expect(cfg.settings.promptPattern).to.equal('%\\s*$');
-  });
-
-  it('rejects non-string promptPattern', () => {
-    writeConfig({ settings: { promptPattern: 123 } });
-    const mgr = new ConfigManager(configPath);
-    expect(() => mgr.load()).to.throw(/promptPattern/i);
-  });
-
-  it('accepts valid string promptPattern', () => {
-    writeConfig({ settings: { promptPattern: '>>>\\s*$' } });
-    const mgr = new ConfigManager(configPath);
-    const cfg = mgr.load();
-    expect(cfg.settings.promptPattern).to.equal('>>>\\s*$');
+    expect(cfg.settings.shell).to.equal('/bin/zsh');
   });
 });

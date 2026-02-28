@@ -6,8 +6,7 @@
       "fontFamily": "Fira Code, monospace",
       "fontSize": 14
     },
-    "shell": "/bin/bash",
-    "promptPattern": "\\$\\s*$"
+    "shell": "/bin/bash"
   },
   "shortcuts": {
     "global": [
@@ -58,5 +57,11 @@
       ]
     }
   },
-  "notes": []
+  "notes": [
+    {
+      "id": "new-note",
+      "name": "New Note",
+      "file": "new-note.md"
+    }
+  ]
 }

@@ -1,6 +1,6 @@
 const { expect } = require('chai');
 const sinon = require('sinon');
-const { PromptDetector } = require('./prompt-detector');
+const { PromptDetector, visibleLength } = require('./prompt-detector');
 
 describe('PromptDetector', () => {
   let clock;
@@ -13,62 +13,227 @@ describe('PromptDetector', () => {
     clock.restore();
   });
 
-  describe('prompt pattern detection', () => {
-    it('fires task_complete when output ends with default prompt after substantial output', () => {
+  describe('visibleLength', () => {
+    it('counts printable characters only', () => {
+      expect(visibleLength('hello world')).to.equal(11);
+    });
+
+    it('strips CSI sequences', () => {
+      expect(visibleLength('\x1b[32mhello\x1b[0m')).to.equal(5);
+    });
+
+    it('strips private mode sequences', () => {
+      expect(visibleLength('$ \x1b[?2004h')).to.equal(2);
+    });
+
+    it('strips OSC sequences', () => {
+      expect(visibleLength('\x1b]0;window title\x07hello')).to.equal(5);
+    });
+
+    it('strips control characters', () => {
+      expect(visibleLength('line1\r\nline2\n')).to.equal(10);
+    });
+
+    it('returns near-zero for a tmux status bar redraw', () => {
+      // Typical status bar: mostly cursor positioning + a small label
+      const statusRedraw = '\x1b[24;1H\x1b[42m\x1b[30m[0] 0:bash*\x1b[0m\x1b[24;80H\x1b[1;1H';
+      expect(visibleLength(statusRedraw)).to.be.below(80);
+    });
+  });
+
+  describe('task completion detection', () => {
+    it('fires task_complete after substantial visible output followed by silence', () => {
       const callback = sinon.stub();
-      const detector = new PromptDetector('\\$\\s*$', callback);
+      const detector = new PromptDetector(callback);
 
-      // Simulate substantial command output
-      detector.recordOutput('t1', 'line 1 of output\n');
-      detector.recordOutput('t1', 'line 2 of output\n');
-      detector.recordOutput('t1', 'line 3 of output\n');
-      // Prompt appears at end
-      detector.recordOutput('t1', 'user@host:~$ ');
+      detector.recordOutput('t1', 'This is a real response with plenty of visible text.\n');
+      detector.recordOutput('t1', 'It spans multiple lines and has real content.\n');
 
-      // Advance past debounce period (2 seconds)
       clock.tick(2100);
 
       expect(callback.calledOnce).to.be.true;
       expect(callback.calledWith('t1')).to.be.true;
     });
 
-    it('does not fire when there is no prior output (just hitting enter)', () => {
+    it('does not fire for escape-heavy output with little visible content', () => {
       const callback = sinon.stub();
-      const detector = new PromptDetector('\\$\\s*$', callback);
+      const detector = new PromptDetector(callback);
 
-      // Just a prompt with no substantial output before it
-      detector.recordOutput('t1', 'user@host:~$ ');
+      // Simulate tmux status bar redraw — lots of bytes, minimal visible text
+      detector.recordOutput('t1', '\x1b[24;1H\x1b[42m\x1b[30m[0] 0:bash*\x1b[0m\x1b[24;80H\x1b[1;1H');
 
       clock.tick(2100);
 
       expect(callback.called).to.be.false;
     });
 
-    it('uses custom prompt pattern from config', () => {
+    it('does not fire when visible output is below threshold', () => {
       const callback = sinon.stub();
-      // Pattern for zsh: ends with %
-      const detector = new PromptDetector('%\\s*$', callback);
+      const detector = new PromptDetector(callback);
 
-      detector.recordOutput('t1', 'lots of command output here\n');
-      detector.recordOutput('t1', 'more output lines\n');
-      detector.recordOutput('t1', 'user@host % ');
+      detector.recordOutput('t1', '$ ');
 
       clock.tick(2100);
+
+      expect(callback.called).to.be.false;
+    });
+  });
+
+  describe('BEL detection', () => {
+    it('fires immediately when BEL character is detected', () => {
+      const callback = sinon.stub();
+      const detector = new PromptDetector(callback);
+
+      // BEL fires immediately — no debounce needed
+      detector.recordOutput('t1', 'some output\x07');
 
       expect(callback.calledOnce).to.be.true;
       expect(callback.calledWith('t1')).to.be.true;
     });
 
-    it('default pattern matches "$ " at end of line', () => {
+    it('fires every BEL with no cooldown', () => {
       const callback = sinon.stub();
-      const detector = new PromptDetector('\\$\\s*$', callback);
+      const detector = new PromptDetector(callback);
 
-      // Enough output to exceed threshold
-      detector.recordOutput('t1', 'a'.repeat(60) + '\n');
-      detector.recordOutput('t1', '$ ');
+      detector.recordOutput('t1', '\x07');
+      expect(callback.calledOnce).to.be.true;
+
+      // Second BEL immediately — should still fire
+      callback.resetHistory();
+      detector.recordOutput('t1', '\x07');
+      expect(callback.calledOnce).to.be.true;
+    });
+
+    it('BEL is not suppressed by input or resize', () => {
+      const callback = sinon.stub();
+      const detector = new PromptDetector(callback);
+
+      // User just typed and terminal just resized
+      detector.recordInput('t1');
+      detector.recordResize('t1');
+
+      // BEL should still fire — it's an explicit signal
+      detector.recordOutput('t1', '\x07');
+      expect(callback.calledOnce).to.be.true;
+    });
+
+    it('does not fire for BEL inside OSC sequences', () => {
+      const callback = sinon.stub();
+      const detector = new PromptDetector(callback);
+
+      // OSC sequence uses BEL as terminator — should not trigger
+      detector.recordOutput('t1', '\x1b]0;window title\x07');
+
+      expect(callback.called).to.be.false;
+    });
+  });
+
+  describe('input suppression', () => {
+    it('does not fire when output is echo from user typing', () => {
+      const callback = sinon.stub();
+      const detector = new PromptDetector(callback);
+
+      for (let i = 0; i < 100; i++) {
+        detector.recordInput('t1');
+        clock.tick(50);
+        detector.recordOutput('t1', 'a');
+      }
 
       clock.tick(2100);
 
+      expect(callback.called).to.be.false;
+    });
+
+    it('resets visible counter on user input', () => {
+      const callback = sinon.stub();
+      const detector = new PromptDetector(callback);
+
+      detector.recordOutput('t1', 'a'.repeat(40));
+
+      detector.recordInput('t1');
+      clock.tick(600);
+      detector.recordOutput('t1', 'x'.repeat(20));
+
+      clock.tick(2100);
+
+      expect(callback.called).to.be.false;
+    });
+
+    it('fires after user runs a command (input then substantial output)', () => {
+      const callback = sinon.stub();
+      const detector = new PromptDetector(callback);
+
+      detector.recordInput('t1');
+
+      clock.tick(600);
+      detector.recordOutput('t1', 'a'.repeat(200));
+
+      clock.tick(2100);
+
+      expect(callback.calledOnce).to.be.true;
+    });
+  });
+
+  describe('resize suppression', () => {
+    it('ignores output shortly after a resize (terminal redraw)', () => {
+      const callback = sinon.stub();
+      const detector = new PromptDetector(callback);
+
+      detector.recordResize('t1');
+
+      clock.tick(100);
+      detector.recordOutput('t1', 'a'.repeat(500));
+
+      clock.tick(2100);
+
+      expect(callback.called).to.be.false;
+    });
+
+    it('fires for output well after a resize', () => {
+      const callback = sinon.stub();
+      const detector = new PromptDetector(callback);
+
+      detector.recordResize('t1');
+
+      clock.tick(1600);
+      detector.recordOutput('t1', 'a'.repeat(200));
+
+      clock.tick(2100);
+
+      expect(callback.calledOnce).to.be.true;
+    });
+  });
+
+  describe('cooldown', () => {
+    it('does not double-ding if output pauses mid-stream then resumes', () => {
+      const callback = sinon.stub();
+      const detector = new PromptDetector(callback);
+
+      detector.recordOutput('t1', 'a'.repeat(200));
+
+      clock.tick(2100);
+      expect(callback.calledOnce).to.be.true;
+
+      callback.resetHistory();
+      detector.recordOutput('t1', 'b'.repeat(200));
+
+      clock.tick(2100);
+      expect(callback.called).to.be.false;
+    });
+
+    it('fires again after cooldown period expires', () => {
+      const callback = sinon.stub();
+      const detector = new PromptDetector(callback);
+
+      detector.recordOutput('t1', 'a'.repeat(200));
+      clock.tick(2100);
+      expect(callback.calledOnce).to.be.true;
+
+      callback.resetHistory();
+      clock.tick(5000);
+
+      detector.recordOutput('t1', 'b'.repeat(200));
+      clock.tick(2100);
       expect(callback.calledOnce).to.be.true;
     });
   });
@@ -76,12 +241,10 @@ describe('PromptDetector', () => {
   describe('debounce behavior', () => {
     it('does not fire before debounce period expires', () => {
       const callback = sinon.stub();
-      const detector = new PromptDetector('\\$\\s*$', callback);
+      const detector = new PromptDetector(callback);
 
-      detector.recordOutput('t1', 'some output\n');
-      detector.recordOutput('t1', '$ ');
+      detector.recordOutput('t1', 'a'.repeat(100));
 
-      // Only advance 1 second (not enough)
       clock.tick(1000);
 
       expect(callback.called).to.be.false;
@@ -89,55 +252,17 @@ describe('PromptDetector', () => {
 
     it('resets debounce timer on new output', () => {
       const callback = sinon.stub();
-      const detector = new PromptDetector('\\$\\s*$', callback);
+      const detector = new PromptDetector(callback);
 
-      detector.recordOutput('t1', 'a'.repeat(60) + '\n');
-      detector.recordOutput('t1', '$ ');
-      clock.tick(1500); // 1.5s in
+      detector.recordOutput('t1', 'a'.repeat(100));
+      clock.tick(1500);
 
-      // More output resets the timer
-      detector.recordOutput('t1', 'b'.repeat(60) + '\n');
-      clock.tick(500); // 2s total from first, but only 0.5s from last
+      detector.recordOutput('t1', 'b'.repeat(100));
+      clock.tick(500);
 
       expect(callback.called).to.be.false;
 
-      // Wait for full debounce from last output
-      detector.recordOutput('t1', '$ ');
-      clock.tick(2100);
-
-      expect(callback.calledOnce).to.be.true;
-    });
-
-    it('prevents rapid-fire notifications from repeated empty prompts', () => {
-      const callback = sinon.stub();
-      const detector = new PromptDetector('\\$\\s*$', callback);
-
-      // Mashing enter on empty prompt - each prompt is small output
-      detector.recordOutput('t1', '$ ');
-      clock.tick(2100);
-      expect(callback.called).to.be.false;
-
-      detector.recordOutput('t1', '$ ');
-      clock.tick(2100);
-      expect(callback.called).to.be.false;
-
-      detector.recordOutput('t1', '$ ');
-      clock.tick(2100);
-      expect(callback.called).to.be.false;
-    });
-  });
-
-  describe('ANSI stripping', () => {
-    it('strips ANSI escape sequences before matching prompt', () => {
-      const callback = sinon.stub();
-      const detector = new PromptDetector('\\$\\s*$', callback);
-
-      // Substantial output
-      detector.recordOutput('t1', 'building project...\ncompleted\n');
-      // Prompt with ANSI color codes
-      detector.recordOutput('t1', '\x1b[32muser@host\x1b[0m:\x1b[34m~\x1b[0m$ ');
-
-      clock.tick(2100);
+      clock.tick(1600);
 
       expect(callback.calledOnce).to.be.true;
     });
@@ -146,30 +271,23 @@ describe('PromptDetector', () => {
   describe('multi-terminal tracking', () => {
     it('tracks multiple terminals independently', () => {
       const callback = sinon.stub();
-      const detector = new PromptDetector('\\$\\s*$', callback);
+      const detector = new PromptDetector(callback);
 
-      // Terminal 1 has substantial output (>50 bytes)
-      detector.recordOutput('t1', 'a'.repeat(60) + '\n');
-      detector.recordOutput('t1', '$ ');
-
-      // Terminal 2 has no substantial output
+      detector.recordOutput('t1', 'a'.repeat(100));
       detector.recordOutput('t2', '$ ');
 
       clock.tick(2100);
 
-      // Only t1 should fire
       expect(callback.calledOnce).to.be.true;
       expect(callback.calledWith('t1')).to.be.true;
     });
 
     it('fires for each terminal that completes a task', () => {
       const callback = sinon.stub();
-      const detector = new PromptDetector('\\$\\s*$', callback);
+      const detector = new PromptDetector(callback);
 
-      detector.recordOutput('t1', 'a'.repeat(60) + '\n');
-      detector.recordOutput('t1', '$ ');
-      detector.recordOutput('t2', 'b'.repeat(60) + '\n');
-      detector.recordOutput('t2', '$ ');
+      detector.recordOutput('t1', 'a'.repeat(100));
+      detector.recordOutput('t2', 'b'.repeat(100));
 
       clock.tick(2100);
 
@@ -182,53 +300,32 @@ describe('PromptDetector', () => {
   describe('removeTerminal', () => {
     it('cleans up terminal state and timers', () => {
       const callback = sinon.stub();
-      const detector = new PromptDetector('\\$\\s*$', callback);
+      const detector = new PromptDetector(callback);
 
-      detector.recordOutput('t1', 'some output\n');
-      detector.recordOutput('t1', '$ ');
+      detector.recordOutput('t1', 'a'.repeat(100));
       detector.removeTerminal('t1');
 
       clock.tick(2100);
 
-      // Timer was cleared, no callback
       expect(callback.called).to.be.false;
     });
   });
 
   describe('state reset after task_complete', () => {
-    it('resets output counter after firing so next empty prompt does not fire', () => {
+    it('resets visible counter after firing so small follow-up does not fire', () => {
       const callback = sinon.stub();
-      const detector = new PromptDetector('\\$\\s*$', callback);
+      const detector = new PromptDetector(callback);
 
-      // First command completes (>50 bytes of output)
-      detector.recordOutput('t1', 'a'.repeat(60) + '\n');
-      detector.recordOutput('t1', '$ ');
+      detector.recordOutput('t1', 'a'.repeat(100));
       clock.tick(2100);
       expect(callback.calledOnce).to.be.true;
 
-      // User hits enter on empty prompt - should not fire again
       callback.resetHistory();
+      clock.tick(5000);
+
       detector.recordOutput('t1', '$ ');
       clock.tick(2100);
       expect(callback.called).to.be.false;
-    });
-
-    it('fires again after a new command produces output', () => {
-      const callback = sinon.stub();
-      const detector = new PromptDetector('\\$\\s*$', callback);
-
-      // First command (>50 bytes)
-      detector.recordOutput('t1', 'a'.repeat(60) + '\n');
-      detector.recordOutput('t1', '$ ');
-      clock.tick(2100);
-      expect(callback.calledOnce).to.be.true;
-
-      // Second command (>50 bytes)
-      callback.resetHistory();
-      detector.recordOutput('t1', 'b'.repeat(60) + '\n');
-      detector.recordOutput('t1', '$ ');
-      clock.tick(2100);
-      expect(callback.calledOnce).to.be.true;
     });
   });
 });

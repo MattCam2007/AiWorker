@@ -18,6 +18,10 @@
     this._notificationsMuted = false;
     this._ctrlActive = false;
     this._altActive = false;
+    this._toolbarMode = 'keys';
+    this._searchOptions = { regex: false, caseSensitive: false, wholeWord: false };
+    this._cmdsHistory = [];
+    this._cmdsFuse = null;
   }
 
   App.prototype.init = function () {
@@ -204,7 +208,11 @@
     var conn = this._connections[id];
     if (!conn) return;
     var name = (conn.config && conn.config.name) || id;
-    if (!confirm('Delete note "' + name + '"? The file will be removed.')) return;
+    var isWorkspaceFile = conn.config && conn.config.file && conn.config.file.startsWith('/');
+    var msg = isWorkspaceFile
+      ? 'Close note "' + name + '"? The file will NOT be deleted.'
+      : 'Delete note "' + name + '"? The file will be removed.';
+    if (!confirm(msg)) return;
 
     var self = this;
     fetch('/api/notes/' + encodeURIComponent(id) + '?deleteFile=true', {
@@ -809,6 +817,11 @@
     listedNotes.forEach(function (id) {
       if (self._noteList) self._noteList.remove(id);
     });
+
+    // Refresh mobile sessions panel if visible
+    if (this._toolbarMode === 'sessions') {
+      this._refreshSessionsPanel();
+    }
   };
 
   App.prototype._handleTerminalListSelect = function (id) {
@@ -953,7 +966,66 @@
   App.prototype._openFileInEditor = function (filePath, fileName) {
     // Reject paths with shell metacharacters or control characters to prevent command injection
     if (/[;|&`$(){}[\]!#~\n\r\0]/.test(filePath)) return;
+
+    // Open .md files as notes instead of in vi
+    if (fileName.toLowerCase().endsWith('.md')) {
+      this._openFileAsNote(filePath);
+      return;
+    }
+
     this._sendCreateTerminal(fileName, 'vi /workspace/' + filePath);
+  };
+
+  App.prototype._openFileAsNote = function (filePath) {
+    var self = this;
+    var absPath = '/workspace/' + filePath;
+
+    // Check if already open as a note connection
+    var existingId = null;
+    Object.keys(this._connections).forEach(function (id) {
+      var conn = self._connections[id];
+      if (conn.type === 'note' && conn.config && conn.config.file === absPath) {
+        existingId = id;
+      }
+    });
+
+    if (existingId) {
+      // Focus the existing note panel (highlight cell or restore from minimized)
+      this._handleTerminalListSelect(existingId);
+      return;
+    }
+
+    // Create/open the file as a note via API
+    fetch('/api/notes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filePath: filePath })
+    })
+      .then(function (res) {
+        if (!res.ok) throw new Error('Server returned ' + res.status);
+        return res.json();
+      })
+      .then(function (note) {
+        if (!note || !note.id) throw new Error('Invalid note response');
+
+        // If note already exists in connections (returned existing from server), just focus it
+        if (self._connections[note.id]) {
+          self._handleTerminalListSelect(note.id);
+          return;
+        }
+
+        var panel = new ns.NotePanel(note);
+        panel._onDirtyChange = function () {
+          self._syncTerminalList();
+        };
+        self._connections[note.id] = panel;
+        self._assignToFirstEmptyCell(note.id, panel);
+        self._updateEmptyState();
+        self._syncTerminalList();
+      })
+      .catch(function (err) {
+        console.error('[app] openFileAsNote failed:', err);
+      });
   };
 
   // --- Mobile Toolbar ---
@@ -1015,7 +1087,9 @@
     // CRITICAL: Prevent focus theft.
     // Without this, tapping any button steals focus from xterm.js,
     // causing keyboard dismiss → viewport resize → SIGWINCH → readline corruption.
+    // Exception: INPUT elements must be focusable (search/cmds inputs).
     toolbar.addEventListener('mousedown', function (e) {
+      if (e.target.tagName === 'INPUT') return;
       e.preventDefault();
     });
 
@@ -1110,17 +1184,23 @@
         touchStartY = null;
       }, { passive: true });
 
-      // Tap on handle: if collapsed, restore to normal; otherwise toggle expand
+      // Click/tap on handle: cycle collapsed -> normal -> expanded -> collapsed
       handle.addEventListener('click', function () {
         if (self._toolbarState === 'collapsed') {
           self._setToolbarState('normal');
         } else if (self._toolbarState === 'normal') {
           self._setToolbarState('expanded');
         } else {
-          self._setToolbarState('normal');
+          self._setToolbarState('collapsed');
         }
       });
     }
+
+    // --- Mode tabs and panels ---
+    this._initMobileToolbarModes();
+    this._initSearchPanel();
+    this._initCmdsPanel();
+    this._initSessionsPanel();
 
     // visualViewport positioning: keeps toolbar above the virtual keyboard
     if (window.visualViewport) {
@@ -1151,6 +1231,403 @@
     setTimeout(function () {
       if (self._engine) self._engine.refitAll();
     }, 250);
+  };
+
+  // --- Mobile Toolbar: helper to get active terminal connection ---
+
+  App.prototype._getActiveTerminalConnection = function () {
+    var activeConn = null;
+
+    if (this._engine) {
+      for (var i = 0; i < this._engine._cells.length; i++) {
+        var cell = this._engine._cells[i];
+        var info = this._engine._cellMap.get(cell);
+        if (info && info.connection) {
+          if (!activeConn) activeConn = info.connection;
+          if (cell.contains(document.activeElement)) {
+            activeConn = info.connection;
+            break;
+          }
+        }
+      }
+    }
+
+    if (activeConn && activeConn.type === 'note') return null;
+    return activeConn;
+  };
+
+  // --- Mobile Toolbar: Mode Switching ---
+
+  App.prototype._initMobileToolbarModes = function () {
+    var self = this;
+    var toolbar = document.getElementById('mobile-toolbar');
+    if (!toolbar) return;
+
+    var tabs = toolbar.querySelectorAll('.mt-mode-tab');
+    tabs.forEach(function (tab) {
+      tab.addEventListener('click', function () {
+        self._setToolbarMode(tab.dataset.mode);
+      });
+    });
+  };
+
+  App.prototype._setToolbarMode = function (mode) {
+    var toolbar = document.getElementById('mobile-toolbar');
+    if (!toolbar) return;
+
+    var prev = this._toolbarMode;
+    this._toolbarMode = mode;
+
+    // Update tab active state
+    var tabs = toolbar.querySelectorAll('.mt-mode-tab');
+    tabs.forEach(function (tab) {
+      tab.classList.toggle('mt-mode-tab-active', tab.dataset.mode === mode);
+    });
+
+    // Update panel visibility
+    var panels = toolbar.querySelectorAll('.mt-panel');
+    panels.forEach(function (panel) {
+      panel.classList.toggle('mt-panel-active', panel.dataset.panel === mode);
+    });
+
+    // Deactivate previous mode
+    if (prev === 'search' && mode !== 'search') {
+      this._deactivateSearchMode();
+    }
+
+    // Activate new mode
+    if (mode === 'search') {
+      this._activateSearchMode();
+    } else if (mode === 'cmds') {
+      this._activateCmdsMode();
+    } else if (mode === 'sessions') {
+      this._refreshSessionsPanel();
+    }
+  };
+
+  // --- Mobile Toolbar: Search Mode ---
+
+  App.prototype._initSearchPanel = function () {
+    var self = this;
+    var input = document.getElementById('mt-search-input');
+    var nextBtn = document.getElementById('mt-search-next');
+    var prevBtn = document.getElementById('mt-search-prev');
+    var regexCb = document.getElementById('mt-search-regex');
+    var caseCb = document.getElementById('mt-search-case');
+    var wholeCb = document.getElementById('mt-search-whole');
+
+    if (!input) return;
+
+    input.addEventListener('input', function () {
+      self._performTerminalSearch(input.value);
+    });
+
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (e.shiftKey) {
+          self._searchPrev();
+        } else {
+          self._searchNext();
+        }
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        self._setToolbarMode('keys');
+      }
+    });
+
+    if (nextBtn) nextBtn.addEventListener('click', function () { self._searchNext(); });
+    if (prevBtn) prevBtn.addEventListener('click', function () { self._searchPrev(); });
+
+    function updateOption() {
+      self._searchOptions.regex = regexCb ? regexCb.checked : false;
+      self._searchOptions.caseSensitive = caseCb ? caseCb.checked : false;
+      self._searchOptions.wholeWord = wholeCb ? wholeCb.checked : false;
+      if (input.value) self._performTerminalSearch(input.value);
+    }
+
+    if (regexCb) regexCb.addEventListener('change', updateOption);
+    if (caseCb) caseCb.addEventListener('change', updateOption);
+    if (wholeCb) wholeCb.addEventListener('change', updateOption);
+  };
+
+  App.prototype._activateSearchMode = function () {
+    var input = document.getElementById('mt-search-input');
+    if (input) {
+      setTimeout(function () { input.focus(); }, 50);
+    }
+  };
+
+  App.prototype._deactivateSearchMode = function () {
+    this._clearTerminalSearch();
+    var input = document.getElementById('mt-search-input');
+    if (input) input.value = '';
+    var status = document.getElementById('mt-search-status');
+    if (status) status.textContent = '';
+  };
+
+  App.prototype._ensureSearchAddon = function (conn) {
+    if (!conn || !conn._terminal) return null;
+    if (!conn._searchAddon && window.SearchAddon) {
+      conn._searchAddon = new window.SearchAddon.SearchAddon();
+      conn._terminal.loadAddon(conn._searchAddon);
+    }
+    return conn._searchAddon;
+  };
+
+  App.prototype._performTerminalSearch = function (query) {
+    var conn = this._getActiveTerminalConnection();
+    var addon = this._ensureSearchAddon(conn);
+    var status = document.getElementById('mt-search-status');
+
+    if (!addon || !query) {
+      if (addon) addon.clearDecorations();
+      if (status) status.textContent = '';
+      return;
+    }
+
+    var opts = {
+      regex: this._searchOptions.regex,
+      caseSensitive: this._searchOptions.caseSensitive,
+      wholeWord: this._searchOptions.wholeWord,
+      incremental: true,
+      decorations: {
+        matchBackground: '#555500',
+        activeMatchBackground: '#888800',
+        matchOverviewRuler: '#888800',
+        activeMatchColorOverviewRuler: '#ffff00'
+      }
+    };
+
+    var self = this;
+    // Use the onDidChangeResults callback to update match count
+    if (!conn._searchResultsListener) {
+      conn._searchResultsListener = addon.onDidChangeResults(function (e) {
+        if (status) {
+          if (e.resultCount > 0) {
+            status.textContent = (e.resultIndex + 1) + '/' + e.resultCount;
+          } else {
+            status.textContent = 'No results';
+          }
+        }
+      });
+    }
+
+    addon.findNext(query, opts);
+  };
+
+  App.prototype._searchNext = function () {
+    var conn = this._getActiveTerminalConnection();
+    var addon = this._ensureSearchAddon(conn);
+    var input = document.getElementById('mt-search-input');
+    if (!addon || !input || !input.value) return;
+
+    addon.findNext(input.value, {
+      regex: this._searchOptions.regex,
+      caseSensitive: this._searchOptions.caseSensitive,
+      wholeWord: this._searchOptions.wholeWord,
+      decorations: {
+        matchBackground: '#555500',
+        activeMatchBackground: '#888800',
+        matchOverviewRuler: '#888800',
+        activeMatchColorOverviewRuler: '#ffff00'
+      }
+    });
+  };
+
+  App.prototype._searchPrev = function () {
+    var conn = this._getActiveTerminalConnection();
+    var addon = this._ensureSearchAddon(conn);
+    var input = document.getElementById('mt-search-input');
+    if (!addon || !input || !input.value) return;
+
+    addon.findPrevious(input.value, {
+      regex: this._searchOptions.regex,
+      caseSensitive: this._searchOptions.caseSensitive,
+      wholeWord: this._searchOptions.wholeWord,
+      decorations: {
+        matchBackground: '#555500',
+        activeMatchBackground: '#888800',
+        matchOverviewRuler: '#888800',
+        activeMatchColorOverviewRuler: '#ffff00'
+      }
+    });
+  };
+
+  App.prototype._clearTerminalSearch = function () {
+    var conn = this._getActiveTerminalConnection();
+    if (conn && conn._searchAddon) {
+      conn._searchAddon.clearDecorations();
+    }
+    if (conn && conn._searchResultsListener) {
+      conn._searchResultsListener.dispose();
+      conn._searchResultsListener = null;
+    }
+  };
+
+  // --- Mobile Toolbar: Cmds Mode ---
+
+  App.prototype._initCmdsPanel = function () {
+    var self = this;
+    var input = document.getElementById('mt-cmds-input');
+    if (!input) return;
+
+    input.addEventListener('input', function () {
+      self._filterCmdsPanel(input.value);
+    });
+
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        self._setToolbarMode('keys');
+      }
+    });
+  };
+
+  App.prototype._activateCmdsMode = function () {
+    var self = this;
+    // Load fresh history
+    fetch('/api/history')
+      .then(function (res) {
+        if (!res.ok) throw new Error('Failed to fetch history');
+        return res.json();
+      })
+      .then(function (history) {
+        self._cmdsHistory = history;
+        self._cmdsFuse = typeof window.Fuse === 'function'
+          ? new window.Fuse(history, { threshold: 0.4, distance: 100 })
+          : null;
+        self._renderCmdsList(history);
+      })
+      .catch(function () {
+        self._cmdsHistory = [];
+        self._renderCmdsList([]);
+      });
+
+    var input = document.getElementById('mt-cmds-input');
+    if (input) {
+      input.value = '';
+      setTimeout(function () { input.focus(); }, 50);
+    }
+  };
+
+  App.prototype._filterCmdsPanel = function (query) {
+    if (!query || !query.trim()) {
+      this._renderCmdsList(this._cmdsHistory);
+      return;
+    }
+    if (this._cmdsFuse) {
+      var results = this._cmdsFuse.search(query);
+      this._renderCmdsList(results.map(function (r) { return r.item; }));
+    }
+  };
+
+  App.prototype._renderCmdsList = function (items) {
+    var list = document.getElementById('mt-cmds-list');
+    if (!list) return;
+    list.innerHTML = '';
+
+    var self = this;
+    items.forEach(function (cmd) {
+      var el = document.createElement('button');
+      el.className = 'mt-cmds-item';
+      el.textContent = cmd;
+      el.addEventListener('click', function () {
+        self._sendToActiveTerminal(cmd + '\n');
+      });
+      list.appendChild(el);
+    });
+  };
+
+  // --- Mobile Toolbar: Sessions Mode ---
+
+  App.prototype._initSessionsPanel = function () {
+    var self = this;
+    var newBtn = document.getElementById('mt-sessions-new');
+    if (newBtn) {
+      newBtn.addEventListener('click', function () {
+        self._showCreateDialog();
+      });
+    }
+  };
+
+  App.prototype._refreshSessionsPanel = function () {
+    var list = document.getElementById('mt-sessions-list');
+    if (!list) return;
+    list.innerHTML = '';
+
+    var self = this;
+    var ids = Object.keys(this._connections);
+
+    // Find which terminal is currently focused
+    var activeId = null;
+    if (this._engine) {
+      for (var i = 0; i < this._engine._cells.length; i++) {
+        var cell = this._engine._cells[i];
+        var info = this._engine._cellMap.get(cell);
+        if (info && info.connection && cell.contains(document.activeElement)) {
+          activeId = info.terminalId;
+          break;
+        }
+      }
+    }
+
+    ids.forEach(function (id) {
+      var conn = self._connections[id];
+      if (conn.type === 'note') return; // Skip notes
+
+      var item = document.createElement('div');
+      item.className = 'mt-session-item';
+      if (id === activeId) item.classList.add('mt-session-item-active');
+
+      var dot = document.createElement('span');
+      dot.className = 'mt-session-dot';
+      if (conn.isActive()) dot.classList.add('mt-session-dot-connected');
+
+      var name = document.createElement('span');
+      name.className = 'mt-session-name';
+      name.textContent = conn.config.name || id;
+
+      var kill = document.createElement('button');
+      kill.className = 'mt-session-kill';
+      kill.textContent = '\u00d7';
+      kill.title = 'Kill session';
+      kill.addEventListener('click', function (e) {
+        e.stopPropagation();
+        self._sendDestroyTerminal(id);
+      });
+
+      item.appendChild(dot);
+      item.appendChild(name);
+      item.appendChild(kill);
+
+      // Tap to switch to this terminal
+      item.addEventListener('click', function () {
+        // Find or assign a cell for this terminal
+        if (self._engine) {
+          // Check if it's already in a cell
+          var found = false;
+          for (var j = 0; j < self._engine._cells.length; j++) {
+            var c = self._engine._cells[j];
+            var ci = self._engine._cellMap.get(c);
+            if (ci && ci.terminalId === id) {
+              conn.focus();
+              found = true;
+              break;
+            }
+          }
+          if (!found) {
+            // Put it in the first available cell
+            self._assignToFirstEmptyCell(id, conn);
+            if (self._engine) self._engine.refitAll();
+          }
+        }
+        // Refresh the panel to update active state
+        self._refreshSessionsPanel();
+      });
+
+      list.appendChild(item);
+    });
   };
 
   App.prototype._sendToActiveTerminal = function (data) {
@@ -1249,6 +1726,22 @@
     if (this._commandPalette && msg.history) {
       this._commandPalette.updateHistory(msg.history);
     }
+    // Also update the mobile cmds panel
+    if (msg.history) {
+      this._cmdsHistory = msg.history;
+      this._cmdsFuse = typeof window.Fuse === 'function'
+        ? new window.Fuse(msg.history, { threshold: 0.4, distance: 100 })
+        : null;
+      if (this._toolbarMode === 'cmds') {
+        var input = document.getElementById('mt-cmds-input');
+        var query = input ? input.value : '';
+        if (query.trim()) {
+          this._filterCmdsPanel(query);
+        } else {
+          this._renderCmdsList(msg.history);
+        }
+      }
+    }
   };
 
   App.prototype._initCommandPaletteSwipe = function () {
@@ -1292,16 +1785,31 @@
 
   App.prototype._initNotifications = function () {
     var self = this;
+    this._audioCtx = null;
 
     // Request browser notification permission
     if (typeof Notification !== 'undefined' && Notification.requestPermission) {
       Notification.requestPermission();
     }
 
+    // Unlock AudioContext on first user interaction (required by browser autoplay policy)
+    function ensureAudioCtx() {
+      if (self._audioCtx) return;
+      var AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return;
+      self._audioCtx = new AudioCtx();
+      if (self._audioCtx.state === 'suspended') {
+        self._audioCtx.resume();
+      }
+    }
+    document.addEventListener('click', ensureAudioCtx, { once: true });
+    document.addEventListener('keydown', ensureAudioCtx, { once: true });
+
     // Wire bell toggle button
     var toggleBtn = document.getElementById('notification-toggle-btn');
     if (toggleBtn) {
       toggleBtn.addEventListener('click', function () {
+        ensureAudioCtx();
         self._toggleNotificationMute();
         toggleBtn.textContent = self._notificationsMuted ? 'Muted' : 'Bell';
         toggleBtn.classList.toggle('notification-muted', self._notificationsMuted);
@@ -1340,19 +1848,25 @@
 
   App.prototype._playDing = function () {
     try {
-      var AudioCtx = window.AudioContext || window.webkitAudioContext;
-      if (!AudioCtx) return;
-      var ctx = new AudioCtx();
+      var ctx = this._audioCtx;
+      if (!ctx) return;
+      // Resume if browser suspended the context (e.g. after tab backgrounding)
+      if (ctx.state === 'suspended') {
+        ctx.resume();
+      }
+      var notif = (this._config && this._config.settings && this._config.settings.notification) || {};
+      var freq = notif.frequency || 830;
+      var dur = notif.duration || 0.3;
       var osc = ctx.createOscillator();
       var gain = ctx.createGain();
       osc.connect(gain);
       gain.connect(ctx.destination);
-      osc.frequency.value = 830;
+      osc.frequency.value = freq;
       osc.type = 'sine';
       gain.gain.setValueAtTime(0.3, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
       osc.start(ctx.currentTime);
-      osc.stop(ctx.currentTime + 0.3);
+      osc.stop(ctx.currentTime + dur);
     } catch (e) {
       // Audio playback failure is non-critical
     }

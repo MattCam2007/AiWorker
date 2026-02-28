@@ -5,16 +5,16 @@ const { createApp } = require('./index');
 
 function cleanupTmuxSessions() {
   try {
-    const output = execSync('tmux list-sessions -F "#{session_name}" 2>/dev/null', {
+    const output = execSync('tmux -L terminaldeck-test list-sessions -F "#{session_name}" 2>/dev/null', {
       encoding: 'utf-8'
     });
     output
       .trim()
       .split('\n')
-      .filter((s) => s.startsWith('terminaldeck-'))
+      .filter((s) => s.startsWith('terminaldeck-test-'))
       .forEach((s) => {
         try {
-          execSync(`tmux kill-session -t "${s}" 2>/dev/null`);
+          execSync(`tmux -L terminaldeck-test kill-session -t "${s}" 2>/dev/null`);
         } catch {}
       });
   } catch {}
@@ -39,7 +39,7 @@ describe('HTTP Server', function () {
 
   beforeEach(async () => {
     cleanupTmuxSessions();
-    app = await createApp({ port: 0 });
+    app = await createApp({ port: 0, tmuxSocket: 'terminaldeck-test', sessionPrefix: 'terminaldeck-test-' });
   });
 
   afterEach(async () => {

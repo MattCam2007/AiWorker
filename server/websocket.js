@@ -25,11 +25,8 @@ class TerminalWSServer {
     this._terminals = new Map();
     this._activity = new ActivityTracker();
 
-    // Prompt detection for task completion notifications
-    const promptPattern = (options.configManager && options.configManager.getConfig())
-      ? options.configManager.getConfig().settings.promptPattern
-      : '\\$\\s*$';
-    this._promptDetector = new PromptDetector(promptPattern, (terminalId) => {
+    // Task completion detection: fires after substantial output followed by silence
+    this._promptDetector = new PromptDetector((terminalId) => {
       this._sendToControl({
         type: 'task_complete',
         terminalId,
@@ -232,7 +229,10 @@ class TerminalWSServer {
     });
 
     pty.onExit(async ({ exitCode, signal }) => {
-      log.warn(`[pty] exited ${short(terminalId)} code=${exitCode} signal=${signal || 'none'} clients=${terminal.clients.size}`);
+      const meta = this._sessionManager.getSessionMeta(terminalId);
+      const uptime = meta && meta.createdAt ? Math.round((Date.now() - meta.createdAt) / 1000) : '?';
+      const shellPid = meta ? meta.shellPid : null;
+      log.warn(`[pty] exited ${short(terminalId)} code=${exitCode} signal=${signal || 'none'} clients=${terminal.clients.size} shellPid=${shellPid || '?'} uptime=${uptime}s reattach=${terminal.reattachCount || 0}`);
 
       // If terminal was already cleaned up (grace period or destroy), nothing to do
       if (!this._terminals.has(terminalId)) {
@@ -262,7 +262,12 @@ class TerminalWSServer {
         log.error(`[pty] max re-attach attempts (${MAX_REATTACH}) reached for ${short(terminalId)}, giving up`);
       } else {
         log.error(`[tmux] session ${short(terminalId)} is GONE — tmux killed the session`);
-        this._sessionManager.dumpDiagnostics().catch(() => {});
+        this._sessionManager.dumpDiagnostics({
+          sessionId: terminalId,
+          sessionName: meta ? meta.name : short(terminalId),
+          shellPid,
+          reason: 'pty-exit-session-gone'
+        }).catch(() => {});
       }
 
       // Terminal is truly dead — notify clients
@@ -364,6 +369,7 @@ class TerminalWSServer {
       switch (msg.type) {
         case 'input':
           if (!terminal.exited) {
+            this._promptDetector.recordInput(terminalId);
             terminal.pty.write(msg.data);
           }
           break;
@@ -374,6 +380,7 @@ class TerminalWSServer {
             msg.cols > 0 && msg.rows > 0 &&
             msg.cols <= MAX_TERM_COLS && msg.rows <= MAX_TERM_ROWS
           ) {
+            this._promptDetector.recordResize(terminalId);
             terminal.pty.resize(msg.cols, msg.rows);
           }
           break;
