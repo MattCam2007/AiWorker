@@ -186,7 +186,7 @@ describe('App', function () {
     var app = new App();
     return app.init().then(function () {
       expect(app._controlWs).to.exist;
-      expect(app._controlWs.url).to.equal('ws://localhost:3000/ws/control');
+      expect(app._controlWs.url).to.equal('ws://localhost:3000/ws/control?t=');
     });
   });
 
@@ -563,7 +563,7 @@ describe('App', function () {
       var grid = document.getElementById('grid-container');
       var emptyState = grid.querySelector('.empty-state');
       expect(emptyState).to.exist;
-      expect(emptyState.textContent).to.include('No terminals');
+      expect(emptyState.textContent).to.include('No panels');
     });
   });
 });

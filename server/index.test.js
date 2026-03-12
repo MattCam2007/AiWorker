@@ -119,7 +119,8 @@ describe('HTTP Server', function () {
   describe('WebSocket upgrade', () => {
     it('upgrades connections on /ws/control path', (done) => {
       const WebSocket = require('ws');
-      const ws = new WebSocket(`ws://127.0.0.1:${app.port}/ws/control`);
+      const token = app.wsServer._serverToken;
+      const ws = new WebSocket(`ws://127.0.0.1:${app.port}/ws/control?t=${encodeURIComponent(token)}`);
       ws.on('open', () => {
         ws.close();
         done();
@@ -129,9 +130,10 @@ describe('HTTP Server', function () {
 
     it('upgrades connections on /ws/terminal/ paths for valid sessions', (done) => {
       const WebSocket = require('ws');
+      const token = app.wsServer._serverToken;
       // Create a terminal first, then connect to it
       app.sessionManager.createTerminal('Test').then((result) => {
-        const ws = new WebSocket(`ws://127.0.0.1:${app.port}/ws/terminal/${result.id}`);
+        const ws = new WebSocket(`ws://127.0.0.1:${app.port}/ws/terminal/${result.id}?t=${encodeURIComponent(token)}`);
         ws.on('open', () => {
           ws.close();
           done();

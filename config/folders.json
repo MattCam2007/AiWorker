@@ -5,16 +5,16 @@
       "name": "ListDeck",
       "parentId": null,
       "collapsed": false,
-      "headerBg": "#33d9b2",
-      "headerColor": "#3a3a5c"
+      "headerBg": "#1f4068",
+      "headerColor": "#34ace0"
     },
     {
       "id": "f9bc68f3-70bc-435e-8ea5-4fb6fd2cc7e5",
       "name": "Ai worker",
       "parentId": null,
       "collapsed": false,
-      "headerBg": "#ffda79",
-      "headerColor": "#1e90ff"
+      "headerBg": "#33d9b2",
+      "headerColor": "#1b1b2f"
     }
   ],
   "sessionFolders": {
@@ -22,6 +22,15 @@
     "3f918472-4f62-4595-8d9b-c903569d3d48": "6b9ff0be-8fad-4474-941e-87a95749593f",
     "c6f75b69-4fc3-492b-95d0-34b838c3ac91": "6b9ff0be-8fad-4474-941e-87a95749593f",
     "4820b25d-20d8-4d2b-ab62-662a36d9aac8": "6b9ff0be-8fad-4474-941e-87a95749593f",
-    "242e09e9-786e-4e27-a3e9-12d921b97e21": "f9bc68f3-70bc-435e-8ea5-4fb6fd2cc7e5"
+    "242e09e9-786e-4e27-a3e9-12d921b97e21": "f9bc68f3-70bc-435e-8ea5-4fb6fd2cc7e5",
+    "a57a7ed7-d7ef-4b91-bc6f-79bb82baeca9": "f9bc68f3-70bc-435e-8ea5-4fb6fd2cc7e5",
+    "bc92ebb1-ddf0-470e-9f8e-ccc7c922e7cd": "f9bc68f3-70bc-435e-8ea5-4fb6fd2cc7e5",
+    "eb7fed1d-ed8f-4f57-9878-a5df99fb2900": "f9bc68f3-70bc-435e-8ea5-4fb6fd2cc7e5",
+    "2fde4fb1-50b9-4711-b1fb-a3ee9ce32078": "f9bc68f3-70bc-435e-8ea5-4fb6fd2cc7e5",
+    "e1671218-c55a-4a0a-a468-be83c3890b85": "f9bc68f3-70bc-435e-8ea5-4fb6fd2cc7e5",
+    "f1690f56-f900-415e-a5ef-559d9180e8ee": "f9bc68f3-70bc-435e-8ea5-4fb6fd2cc7e5",
+    "b8b48ea2-c355-4603-a311-a84a6fa17f16": "f9bc68f3-70bc-435e-8ea5-4fb6fd2cc7e5",
+    "014f131c-94a9-4479-a5be-d817af7dc8cb": "f9bc68f3-70bc-435e-8ea5-4fb6fd2cc7e5",
+    "5e0c0cc0-ba78-4aec-ade2-4a125886930a": "f9bc68f3-70bc-435e-8ea5-4fb6fd2cc7e5"
   }
 }

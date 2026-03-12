@@ -65,8 +65,8 @@ describe('LayoutEngine', function () {
     var engine = new LayoutEngine(grid);
 
     engine.setGrid('1x1');
-    expect(grid.style.gridTemplateColumns).to.equal('repeat(1, 1fr)');
-    expect(grid.style.gridTemplateRows).to.equal('repeat(1, 1fr)');
+    expect(grid.style.gridTemplateColumns).to.equal('1fr');
+    expect(grid.style.gridTemplateRows).to.equal('1fr');
     expect(grid.querySelectorAll('.grid-cell').length).to.equal(1);
   });
 
@@ -75,8 +75,8 @@ describe('LayoutEngine', function () {
     var engine = new LayoutEngine(grid);
 
     engine.setGrid('2x2');
-    expect(grid.style.gridTemplateColumns).to.equal('repeat(2, 1fr)');
-    expect(grid.style.gridTemplateRows).to.equal('repeat(2, 1fr)');
+    expect(grid.style.gridTemplateColumns).to.equal('1fr 1fr');
+    expect(grid.style.gridTemplateRows).to.equal('1fr 1fr');
     expect(grid.querySelectorAll('.grid-cell').length).to.equal(4);
   });
 
@@ -85,7 +85,7 @@ describe('LayoutEngine', function () {
     var engine = new LayoutEngine(grid);
 
     engine.setGrid('3x2');
-    expect(grid.style.gridTemplateColumns).to.equal('repeat(3, 1fr)');
+    expect(grid.style.gridTemplateColumns).to.equal('1fr 1fr 1fr');
     expect(grid.querySelectorAll('.grid-cell').length).to.equal(6);
   });
 
@@ -97,8 +97,8 @@ describe('LayoutEngine', function () {
     Object.keys(presets).forEach(function (spec) {
       engine.setGrid(spec);
       var p = presets[spec];
-      expect(grid.style.gridTemplateColumns).to.equal('repeat(' + p.cols + ', 1fr)');
-      expect(grid.style.gridTemplateRows).to.equal('repeat(' + p.rows + ', 1fr)');
+      expect(grid.style.gridTemplateColumns).to.equal(Array(p.cols).fill('1fr').join(' '));
+      expect(grid.style.gridTemplateRows).to.equal(Array(p.rows).fill('1fr').join(' '));
       expect(grid.querySelectorAll('.grid-cell').length).to.equal(p.cols * p.rows);
     });
   });

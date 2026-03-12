@@ -349,16 +349,18 @@ describe('TerminalWSServer', function () {
         const tokenPort = tokenServer.address().port;
         // Connect without the required token
         const ws = new WebSocket(`ws://127.0.0.1:${tokenPort}/ws/control`);
-        ws.on('error', () => {
-          // Expected: connection rejected
+        let finished = false;
+        const finish = (err) => {
+          if (finished) return;
+          finished = true;
           tokenWss.closeAll();
-          tokenServer.close(done);
-        });
+          tokenServer.close(() => done(err));
+        };
+        ws.on('error', () => finish());
         ws.on('unexpected-response', (req, res) => {
           expect(res.statusCode).to.equal(403);
           ws.terminate();
-          tokenWss.closeAll();
-          tokenServer.close(done);
+          finish();
         });
       });
     });

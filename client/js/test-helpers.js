@@ -66,6 +66,12 @@ class MockWebSocket {
   }
 
   _emit(event, data) {
+    // Support property-style handlers (onopen, onmessage, onclose)
+    const propHandler = this['on' + event];
+    if (typeof propHandler === 'function') {
+      propHandler(data);
+    }
+    // Support addEventListener-style handlers
     const handlers = this._listeners[event] || [];
     for (const h of handlers) {
       h(data);

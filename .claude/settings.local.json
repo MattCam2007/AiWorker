@@ -64,7 +64,10 @@
       "Read(//workspace/AiWorker/**)",
       "Read(//ssh-agent/**)",
       "Bash(ssh-add -l)",
-      "Bash(npx esbuild:*)"
+      "Bash(npx esbuild:*)",
+      "Bash(npm list:*)",
+      "Bash(npm ls:*)",
+      "Bash(grep -oP 'syncScrollArea\\\\\\([^\\)]*\\\\\\)\\\\{.{0,500}' /workspace/AiWorker/client/vendor/xterm.js | head -3)"
     ]
   }
 }
