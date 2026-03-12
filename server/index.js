@@ -8,6 +8,7 @@ const { TerminalWSServer } = require('./websocket');
 const { listDirectory } = require('./filetree');
 const { getHistoryFilePath, createHistoryRoute } = require('./history');
 const { FileManager } = require('./files');
+const { createFileOps } = require('./fileops');
 const log = require('./log');
 
 const MIME_TYPES = {
@@ -99,6 +100,8 @@ async function createApp(options = {}) {
   folderManager.load();
 
   const fileManager = new FileManager(configManager);
+
+  const fileOps = createFileOps(options.fileOpsRoot || '/workspace');
 
   const server = http.createServer((req, res) => {
     // API routes
@@ -333,6 +336,141 @@ async function createApp(options = {}) {
         }
         proxyReq.end();
       });
+      return;
+    }
+
+    if (req.method === 'POST' && req.url === '/api/fileops/create') {
+      readBody(req).then(async function (body) {
+        var data;
+        try { data = JSON.parse(body); } catch (e) {
+          setSecurityHeaders(res); res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Invalid JSON' })); return;
+        }
+        if (!data.parent || !data.name || !data.type) {
+          setSecurityHeaders(res); res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'parent, name, type required' })); return;
+        }
+        try {
+          var entry;
+          if (data.type === 'file') {
+            entry = await fileOps.createFile(data.parent, data.name);
+          } else if (data.type === 'dir') {
+            entry = await fileOps.createDirectory(data.parent, data.name);
+          } else {
+            setSecurityHeaders(res); res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'type must be file or dir' })); return;
+          }
+          setSecurityHeaders(res); res.writeHead(201, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(entry));
+        } catch (err) {
+          setSecurityHeaders(res);
+          if (err.code === 'TRAVERSAL') { res.writeHead(403); res.end(JSON.stringify({ error: 'Forbidden' })); }
+          else if (err.code === 'INVALID_NAME') { res.writeHead(400); res.end(JSON.stringify({ error: 'Invalid name' })); }
+          else if (err.code === 'EEXIST') { res.writeHead(409); res.end(JSON.stringify({ error: 'Already exists' })); }
+          else { res.writeHead(500); res.end(JSON.stringify({ error: err.message })); }
+        }
+      }).catch(function (err) { if (!res.headersSent) { setSecurityHeaders(res); res.writeHead(500); res.end(JSON.stringify({ error: err.message })); } });
+      return;
+    }
+
+    if (req.method === 'POST' && req.url === '/api/fileops/rename') {
+      readBody(req).then(async function (body) {
+        var data;
+        try { data = JSON.parse(body); } catch (e) {
+          setSecurityHeaders(res); res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Invalid JSON' })); return;
+        }
+        if (!data.path || !data.newName) {
+          setSecurityHeaders(res); res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'path and newName required' })); return;
+        }
+        try {
+          var entry = await fileOps.rename(data.path, data.newName);
+          setSecurityHeaders(res); res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(entry));
+        } catch (err) {
+          setSecurityHeaders(res);
+          if (err.code === 'TRAVERSAL') { res.writeHead(403); res.end(JSON.stringify({ error: 'Forbidden' })); }
+          else if (err.code === 'INVALID_NAME') { res.writeHead(400); res.end(JSON.stringify({ error: 'Invalid name' })); }
+          else if (err.code === 'ENOENT') { res.writeHead(404); res.end(JSON.stringify({ error: 'Not found' })); }
+          else { res.writeHead(500); res.end(JSON.stringify({ error: err.message })); }
+        }
+      }).catch(function (err) { if (!res.headersSent) { setSecurityHeaders(res); res.writeHead(500); res.end(JSON.stringify({ error: err.message })); } });
+      return;
+    }
+
+    if (req.method === 'POST' && req.url === '/api/fileops/delete') {
+      readBody(req).then(async function (body) {
+        var data;
+        try { data = JSON.parse(body); } catch (e) {
+          setSecurityHeaders(res); res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Invalid JSON' })); return;
+        }
+        if (!data.path) {
+          setSecurityHeaders(res); res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'path required' })); return;
+        }
+        try {
+          var result = await fileOps.remove(data.path);
+          setSecurityHeaders(res); res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(result));
+        } catch (err) {
+          setSecurityHeaders(res);
+          if (err.code === 'TRAVERSAL') { res.writeHead(403); res.end(JSON.stringify({ error: 'Forbidden' })); }
+          else if (err.code === 'ENOENT') { res.writeHead(404); res.end(JSON.stringify({ error: 'Not found' })); }
+          else { res.writeHead(500); res.end(JSON.stringify({ error: err.message })); }
+        }
+      }).catch(function (err) { if (!res.headersSent) { setSecurityHeaders(res); res.writeHead(500); res.end(JSON.stringify({ error: err.message })); } });
+      return;
+    }
+
+    if (req.method === 'POST' && req.url === '/api/fileops/copy') {
+      readBody(req).then(async function (body) {
+        var data;
+        try { data = JSON.parse(body); } catch (e) {
+          setSecurityHeaders(res); res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Invalid JSON' })); return;
+        }
+        if (!data.src || !data.destDir) {
+          setSecurityHeaders(res); res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'src and destDir required' })); return;
+        }
+        try {
+          var entry = await fileOps.copy(data.src, data.destDir);
+          setSecurityHeaders(res); res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(entry));
+        } catch (err) {
+          setSecurityHeaders(res);
+          if (err.code === 'TRAVERSAL') { res.writeHead(403); res.end(JSON.stringify({ error: 'Forbidden' })); }
+          else if (err.code === 'ENOENT') { res.writeHead(404); res.end(JSON.stringify({ error: 'Not found' })); }
+          else { res.writeHead(500); res.end(JSON.stringify({ error: err.message })); }
+        }
+      }).catch(function (err) { if (!res.headersSent) { setSecurityHeaders(res); res.writeHead(500); res.end(JSON.stringify({ error: err.message })); } });
+      return;
+    }
+
+    if (req.method === 'POST' && req.url === '/api/fileops/move') {
+      readBody(req).then(async function (body) {
+        var data;
+        try { data = JSON.parse(body); } catch (e) {
+          setSecurityHeaders(res); res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Invalid JSON' })); return;
+        }
+        if (!data.src || !data.destDir) {
+          setSecurityHeaders(res); res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'src and destDir required' })); return;
+        }
+        try {
+          var entry = await fileOps.move(data.src, data.destDir);
+          setSecurityHeaders(res); res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(entry));
+        } catch (err) {
+          setSecurityHeaders(res);
+          if (err.code === 'TRAVERSAL') { res.writeHead(403); res.end(JSON.stringify({ error: 'Forbidden' })); }
+          else if (err.code === 'ENOENT') { res.writeHead(404); res.end(JSON.stringify({ error: 'Not found' })); }
+          else { res.writeHead(500); res.end(JSON.stringify({ error: err.message })); }
+        }
+      }).catch(function (err) { if (!res.headersSent) { setSecurityHeaders(res); res.writeHead(500); res.end(JSON.stringify({ error: err.message })); } });
       return;
     }
 
