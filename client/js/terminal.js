@@ -19,6 +19,7 @@
     this._detaching = false;
     this._exited = false;
     this._mouseTrackingStripped = false;
+    this._contextMenu = null;
     // Callback hooks (set by App)
     this._toastTimer = null;
     this._onStatusChange = null;
@@ -27,6 +28,13 @@
   TerminalConnection.prototype.attach = function (el) {
     this._element = el;
     this._detaching = false;
+
+    // Right-click context menu
+    var self = this;
+    el.addEventListener('contextmenu', function (e) {
+      e.preventDefault();
+      self._showContextMenu(e.clientX, e.clientY);
+    });
 
     // Create fresh xterm instance
     var theme = this.config.theme || {};
@@ -88,7 +96,6 @@
     // be finalized.  Double-rAF ensures one full style → layout → paint
     // cycle has completed before we measure.  A setTimeout safety-net covers
     // edge cases (slow font loading, complex layout recalculations).
-    var self = this;
     function doFit() {
       if (self._fitAddon && self._terminal) {
         self._fitAddon.fit();
@@ -622,6 +629,173 @@
       document.addEventListener('mousemove', onMove);
       document.addEventListener('mouseup', onUp);
     });
+  };
+
+  // ---------------------------------------------------------------
+  // Right-click context menu
+  // ---------------------------------------------------------------
+
+  TerminalConnection.prototype._showContextMenu = function (x, y) {
+    this._dismissContextMenu();
+    var self = this;
+
+    var menu = document.createElement('div');
+    menu.className = 'ep-context-menu';
+
+    var hasSel = !!(this._terminal && this._terminal.getSelection());
+    var isOpen = !!(this._ws && this._ws.readyState === WebSocket.OPEN);
+
+    var items = [
+      { label: 'Copy', disabled: !hasSel, action: function () {
+        var sel = self._terminal && self._terminal.getSelection();
+        if (!sel) return;
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(sel).catch(function () {});
+        } else {
+          var ta = document.createElement('textarea');
+          ta.value = sel;
+          ta.style.cssText = 'position:fixed;opacity:0;pointer-events:none;top:0;left:0';
+          document.body.appendChild(ta);
+          ta.select();
+          try { document.execCommand('copy'); } catch (e) {}
+          document.body.removeChild(ta);
+        }
+      }},
+      { label: 'Paste', disabled: !isOpen, action: function () {
+        if (!self._ws || self._ws.readyState !== WebSocket.OPEN) return;
+        if (navigator.clipboard && navigator.clipboard.readText) {
+          navigator.clipboard.readText().then(function (text) {
+            if (text) {
+              self._ws.send(JSON.stringify({ type: 'input', data: text }));
+              if (self._terminal) self._terminal.focus();
+            }
+          }).catch(function () {});
+        }
+      }},
+      { label: 'Select All', action: function () {
+        if (self._terminal) {
+          self._terminal.selectAll();
+          self._terminal.focus();
+        }
+      }},
+      null,
+      { label: 'Clear screen', shortcut: 'Ctrl+L', disabled: !isOpen, action: function () {
+        if (self._ws && self._ws.readyState === WebSocket.OPEN) {
+          self._ws.send(JSON.stringify({ type: 'input', data: '\x0c' }));
+        }
+        if (self._terminal) self._terminal.focus();
+      }},
+      { label: 'Scroll to bottom', action: function () {
+        if (self._terminal) {
+          self._terminal.scrollToBottom();
+          // xterm.js defers the viewport scrollTop update to rAF, so also
+          // force the DOM viewport to the absolute bottom as a fallback.
+          var vp = self._element && self._element.querySelector('.xterm-viewport');
+          if (vp) {
+            requestAnimationFrame(function () {
+              vp.scrollTop = vp.scrollHeight;
+            });
+          }
+          // When mouse tracking is stripped (e.g. tmux), wheel events are
+          // forwarded to the PTY so tmux handles scrollback.  xterm.js's
+          // own viewport has no scrollback in alternate-buffer mode, so
+          // scrollToBottom() is a no-op.  Send 'q' to exit tmux copy mode
+          // and return to the live output.
+          if (self._mouseTrackingStripped &&
+              self._terminal.buffer.active.type === 'alternate' &&
+              self._ws && self._ws.readyState === WebSocket.OPEN) {
+            self._ws.send(JSON.stringify({ type: 'input', data: 'q' }));
+          }
+          self._terminal.focus();
+        }
+      }},
+      null,
+      { label: 'Refresh display', action: function () {
+        self.refresh();
+        if (self._terminal) self._terminal.focus();
+      }},
+      null,
+      { label: 'Rename\u2026', action: function () {
+        var cell = self._element && self._element.closest && self._element.closest('.grid-cell');
+        if (cell) {
+          var editBtn = cell.querySelector('.cell-header-edit');
+          if (editBtn) editBtn.click();
+        }
+      }},
+      { label: 'Close terminal', action: function () {
+        var cell = self._element && self._element.closest && self._element.closest('.grid-cell');
+        if (cell) {
+          var closeBtn = cell.querySelector('.cell-header-close');
+          if (closeBtn) closeBtn.click();
+        }
+      }},
+    ];
+
+    this._buildMenuItems(menu, items);
+
+    document.body.appendChild(menu);
+    this._contextMenu = menu;
+
+    // Position: keep within viewport
+    var rect = menu.getBoundingClientRect();
+    var vw = window.innerWidth;
+    var vh = window.innerHeight;
+    if (x + rect.width > vw) x = vw - rect.width - 4;
+    if (y + rect.height > vh) y = vh - rect.height - 4;
+    if (x < 0) x = 4;
+    if (y < 0) y = 4;
+    menu.style.left = x + 'px';
+    menu.style.top = y + 'px';
+
+    // Dismiss on click outside or Escape
+    var dismiss = function (e) {
+      if (e.type === 'keydown' && e.key !== 'Escape') return;
+      if (e.type === 'mousedown' && menu.contains(e.target)) return;
+      self._dismissContextMenu();
+      document.removeEventListener('mousedown', dismiss, true);
+      document.removeEventListener('keydown', dismiss, true);
+    };
+    setTimeout(function () {
+      document.addEventListener('mousedown', dismiss, true);
+      document.addEventListener('keydown', dismiss, true);
+    }, 0);
+  };
+
+  TerminalConnection.prototype._buildMenuItems = function (container, items) {
+    var self = this;
+    for (var i = 0; i < items.length; i++) {
+      var item = items[i];
+      if (item === null) {
+        var divider = document.createElement('div');
+        divider.className = 'ep-ctx-divider';
+        container.appendChild(divider);
+        continue;
+      }
+      var el = document.createElement('div');
+      el.className = item.disabled ? 'ep-ctx-item ep-ctx-item-disabled' : 'ep-ctx-item';
+      var labelHtml = '<span class="ep-ctx-item-label">' + item.label + '</span>';
+      var shortcutHtml = item.shortcut
+        ? '<span class="ep-ctx-item-shortcut">' + item.shortcut + '</span>'
+        : '';
+      el.innerHTML = labelHtml + shortcutHtml;
+      if (!item.disabled) {
+        (function (action) {
+          el.addEventListener('click', function (e) {
+            e.stopPropagation();
+            self._dismissContextMenu();
+            action();
+          });
+        })(item.action);
+      }
+      container.appendChild(el);
+    }
+  };
+
+  TerminalConnection.prototype._dismissContextMenu = function () {
+    if (this._contextMenu && this._contextMenu.parentNode) {
+      this._contextMenu.parentNode.removeChild(this._contextMenu);
+    }
+    this._contextMenu = null;
   };
 
   ns.TerminalConnection = TerminalConnection;

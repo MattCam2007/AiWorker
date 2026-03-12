@@ -100,7 +100,7 @@ describe('HTTP Server', function () {
         expect(res.status).to.equal(500);
         expect(res.headers['content-type']).to.include('application/json');
         const body = JSON.parse(res.body);
-        expect(body).to.have.property('error', 'Failed to list sessions');
+        expect(body).to.have.property('error', 'db down');
       } finally {
         app.sessionManager.listSessions = original;
       }

@@ -219,20 +219,15 @@
 
   TerminalList.prototype._createTerminalEl = function (c, indent) {
     var self = this;
-    var isNote = c.panelType === 'note';
     var isEditor = c.panelType === 'editor';
     var item = document.createElement('div');
     item.className = 'tl-item';
     item.dataset.terminalId = c.id;
-    if (isNote) item.dataset.panelType = 'note';
     if (isEditor) item.dataset.panelType = 'editor';
     item.style.paddingLeft = (12 + indent) + 'px';
 
     var dot = document.createElement('span');
-    if (isNote) {
-      dot.className = 'tl-status tl-status-note';
-      dot.textContent = '\uD83D\uDCDD';
-    } else if (isEditor) {
+    if (isEditor) {
       dot.className = 'tl-status tl-status-editor';
       dot.textContent = '\u270F\uFE0F'; // ✏️
     } else {
@@ -253,8 +248,8 @@
     var actions = document.createElement('span');
     actions.className = 'tl-actions';
 
-    // Folder-assign button (terminals only, not notes or editors)
-    if (!isNote && !isEditor) {
+    // Folder-assign button (terminals only, not editors)
+    if (!isEditor) {
       var folderBtn = document.createElement('button');
       folderBtn.className = 'tl-btn tl-btn-folder';
       folderBtn.textContent = '\uD83D\uDCC2'; // 📂
@@ -523,7 +518,7 @@
 
   TerminalList.prototype.updateActivity = function (id, active) {
     var el = this._items.get(id);
-    if (!el || el.dataset.panelType === 'note' || el.dataset.panelType === 'editor') return;
+    if (!el || el.dataset.panelType === 'editor') return;
     var dot = el.querySelector('.tl-status');
     if (!dot) return;
     if (active) {

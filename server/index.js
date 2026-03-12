@@ -7,7 +7,7 @@ const { FolderManager } = require('./folders');
 const { TerminalWSServer } = require('./websocket');
 const { listDirectory } = require('./filetree');
 const { getHistoryFilePath, createHistoryRoute } = require('./history');
-const { NoteManager } = require('./notes');
+const { FileManager } = require('./files');
 const log = require('./log');
 
 const MIME_TYPES = {
@@ -98,7 +98,7 @@ async function createApp(options = {}) {
   const folderManager = new FolderManager(foldersPath);
   folderManager.load();
 
-  const noteManager = new NoteManager(configManager);
+  const fileManager = new FileManager(configManager);
 
   const server = http.createServer((req, res) => {
     // API routes
@@ -173,12 +173,14 @@ async function createApp(options = {}) {
       return;
     }
 
-    // --- Note API routes ---
+    // --- File editor API routes ---
+    // Used by EditorPanel to open, read, save, and close workspace files.
+    // Kept at /api/notes for client compatibility; files are edited in place.
 
     if (req.url === '/api/notes' && req.method === 'GET') {
       setSecurityHeaders(res);
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(noteManager.listNotes()));
+      res.end(JSON.stringify(fileManager.listFiles()));
       return;
     }
 
@@ -191,30 +193,22 @@ async function createApp(options = {}) {
           res.end(JSON.stringify({ error: 'Invalid JSON' }));
           return;
         }
-        // Open an existing workspace file as a note
-        if (data.filePath && typeof data.filePath === 'string') {
-          var note = noteManager.openFile(data.filePath);
-          if (!note) {
-            setSecurityHeaders(res);
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'Invalid file path' }));
-            return;
-          }
-          setSecurityHeaders(res);
-          res.writeHead(201, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify(note));
-          return;
-        }
-        if (!data.name || typeof data.name !== 'string') {
+        if (!data.filePath || typeof data.filePath !== 'string') {
           setSecurityHeaders(res);
           res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'name is required' }));
+          res.end(JSON.stringify({ error: 'filePath is required' }));
           return;
         }
-        var note = noteManager.createNote(data.name);
+        var file = fileManager.openFile(data.filePath);
+        if (!file) {
+          setSecurityHeaders(res);
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Invalid file path' }));
+          return;
+        }
         setSecurityHeaders(res);
         res.writeHead(201, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(note));
+        res.end(JSON.stringify(file));
       }).catch(function (err) {
         if (!res.headersSent) {
           setSecurityHeaders(res);
@@ -226,19 +220,19 @@ async function createApp(options = {}) {
     }
 
     // Match /api/notes/:id routes
-    var noteMatch = req.url.match(/^\/api\/notes\/([a-zA-Z0-9_-]+)(\?.*)?$/);
-    if (noteMatch) {
-      var noteId = noteMatch[1];
+    var fileMatch = req.url.match(/^\/api\/notes\/([a-zA-Z0-9_-]+)(\?.*)?$/);
+    if (fileMatch) {
+      var fileId = fileMatch[1];
 
       if (req.method === 'GET') {
-        var note = noteManager.getNote(noteId);
+        var file = fileManager.getFile(fileId);
         setSecurityHeaders(res);
-        if (!note) {
+        if (!file) {
           res.writeHead(404, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Note not found' }));
+          res.end(JSON.stringify({ error: 'File not found' }));
         } else {
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify(note));
+          res.end(JSON.stringify(file));
         }
         return;
       }
@@ -258,16 +252,14 @@ async function createApp(options = {}) {
             res.end(JSON.stringify({ error: 'content is required' }));
             return;
           }
-          var result = noteManager.saveNote(noteId, data.content);
+          var result = fileManager.saveFile(fileId, data.content);
           setSecurityHeaders(res);
           if (!result) {
             res.writeHead(404, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'Note not found' }));
+            res.end(JSON.stringify({ error: 'File not found' }));
           } else {
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify(result));
-            // Broadcast note_saved to all control clients
-            wsServer.broadcastNoteSaved(noteId);
           }
         }).catch(function (err) {
           if (!res.headersSent) {
@@ -280,19 +272,68 @@ async function createApp(options = {}) {
       }
 
       if (req.method === 'DELETE') {
-        var url = new URL(req.url, 'http://localhost');
-        var deleteFile = url.searchParams.get('deleteFile') === 'true';
-        var deleteResult = noteManager.deleteNote(noteId, deleteFile);
+        var closeResult = fileManager.closeFile(fileId);
         setSecurityHeaders(res);
-        if (!deleteResult) {
+        if (!closeResult) {
           res.writeHead(404, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Note not found' }));
+          res.end(JSON.stringify({ error: 'File not found' }));
         } else {
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify(deleteResult));
+          res.end(JSON.stringify(closeResult));
         }
         return;
       }
+    }
+
+    // Listdeck proxy — forwards /api/listdeck/* to the configured Listdeck server
+    if (req.url.startsWith('/api/listdeck/')) {
+      const ldConfig = configManager.getConfig().listdeck || {};
+      const ldBase = (ldConfig.url || 'http://localhost:5000').replace(/\/$/, '');
+      const subPath = req.url.slice('/api/listdeck'.length); // e.g. /daily/2026-03-12
+      const targetUrl = ldBase + '/api/v1' + subPath;
+      log.log('[listdeck proxy]', req.method, targetUrl);
+
+      readBody(req).then(function (body) {
+        let parsedTarget;
+        try { parsedTarget = new URL(targetUrl); } catch (e) {
+          setSecurityHeaders(res);
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Invalid Listdeck URL' }));
+          return;
+        }
+
+        const proxyOpts = {
+          hostname: parsedTarget.hostname,
+          port: parsedTarget.port || 80,
+          path: parsedTarget.pathname + parsedTarget.search,
+          method: req.method,
+          headers: { 'Content-Type': 'application/json' }
+        };
+
+        const proxyReq = http.request(proxyOpts, function (proxyRes) {
+          var chunks = [];
+          proxyRes.on('data', function (c) { chunks.push(c); });
+          proxyRes.on('end', function () {
+            setSecurityHeaders(res);
+            res.writeHead(proxyRes.statusCode, { 'Content-Type': 'application/json' });
+            res.end(Buffer.concat(chunks));
+          });
+        });
+
+        proxyReq.on('error', function () {
+          if (!res.headersSent) {
+            setSecurityHeaders(res);
+            res.writeHead(502, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Listdeck unreachable' }));
+          }
+        });
+
+        if (body && (req.method === 'POST' || req.method === 'PATCH')) {
+          proxyReq.write(body);
+        }
+        proxyReq.end();
+      });
+      return;
     }
 
     // Static files
@@ -328,7 +369,7 @@ async function createApp(options = {}) {
     port: actualPort,
     configManager,
     sessionManager,
-    noteManager,
+    fileManager,
     wsServer,
     close() {
       return new Promise((resolve) => {

@@ -238,6 +238,12 @@ class ConfigManager extends EventEmitter {
     if (config.notes) {
       result.notes = config.notes;
     }
+    if (config.openFiles) {
+      result.openFiles = config.openFiles;
+    }
+    if (config.listdeck) {
+      result.listdeck = config.listdeck;
+    }
     return result;
   }
 }

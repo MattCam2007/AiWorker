@@ -15,6 +15,23 @@
     </div>
     <div class="sidebar-sections">
       <div class="sidebar-section">
+        <div class="section-header" data-section="today">
+          <span class="section-toggle">&#9660;</span>
+          <span class="section-title">Today</span>
+          <span class="section-header-spacer"></span>
+          <button id="tt-nav-left" class="tt-nav-btn" title="Previous day">&#9666;</button>
+          <span id="today-date-label" class="tt-date-label"></span>
+          <button id="tt-nav-right" class="tt-nav-btn" title="Next day">&#9656;</button>
+          <button class="tt-refresh-btn" title="Refresh tasks">&#x21bb;</button>
+        </div>
+        <div id="today-tasks-section" class="section-content">
+          <div class="tt-add-row">
+            <input id="tt-add-input" class="tt-add-input" type="text" placeholder="Add task..." autocomplete="off">
+          </div>
+          <div id="tt-list"></div>
+        </div>
+      </div>
+      <div class="sidebar-section">
         <div class="section-header" data-section="terminals">
           <span class="section-toggle">&#9660;</span>
           <span class="section-title">Terminals</span>
@@ -22,13 +39,6 @@
           <button id="new-folder-btn" class="ft-refresh-btn" title="New folder">&#128193;+</button>
         </div>
         <div id="terminal-list" class="section-content"></div>
-      </div>
-      <div class="sidebar-section">
-        <div class="section-header" data-section="notes">
-          <span class="section-toggle">&#9660;</span>
-          <span class="section-title">Notes</span>
-        </div>
-        <div id="note-list" class="section-content"></div>
       </div>
       <div class="sidebar-section">
         <div class="section-header" data-section="files">
@@ -40,6 +50,7 @@
         <div id="file-tree" class="section-content"></div>
       </div>
     </div>
+    <div id="sidebar-resize-handle" class="sidebar-resize-handle"></div>
   </aside>
 
   <div id="sidebar-backdrop" class="sidebar-backdrop hidden"></div>
@@ -155,14 +166,14 @@
   <script src="vendor/xterm.js"></script>
   <script src="vendor/xterm-addon-fit.js"></script>
   <script src="vendor/fuse.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <!-- CodeMirror 6: bundled locally so it works offline / in Docker -->
   <script src="vendor/codemirror6.bundle.js"></script>
   <script src="js/terminal.js"></script>
-  <script src="js/note-panel.js"></script>
+  <script src="js/editor-settings.js"></script>
   <script src="js/editor-panel.js"></script>
   <script src="js/layout.js"></script>
   <script src="js/filetree.js"></script>
+  <script src="js/today-tasks.js"></script>
   <script src="js/terminal-list.js"></script>
   <script src="js/command-palette.js"></script>
   <script src="js/app.js"></script>

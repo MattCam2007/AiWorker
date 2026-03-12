@@ -7,13 +7,13 @@
 
   function App() {
     this._config = null;
-    this._connections = {};  // id -> TerminalConnection or NotePanel
+    this._connections = {};  // id -> TerminalConnection or EditorPanel
     this._engine = null;
     this._statusEl = null;
     this._controlWs = null;
     this._fileTree = null;
     this._terminalList = null;
-    this._noteList = null;
+    this._todayTasks = null;
     this._commandPalette = null;
     this._notificationsMuted = false;
     this._ctrlActive = false;
@@ -41,6 +41,7 @@
         self._buildHeader();
         self._wireCreateDialog();
         self._initFileTree();
+        self._initTodayTasks();
         self._initTerminalList();
         self._initSidebarSections();
         self._wireSidebarToggle();
@@ -54,9 +55,6 @@
       })
       .then(function () {
         return self._loadSessions();
-      })
-      .then(function () {
-        return self._loadNotes();
       })
       .then(function () {
         self._updateStatus();
@@ -86,9 +84,8 @@
     this._engine = new ns.LayoutEngine(grid);
     this._engine._onCloseTerminal = function (id) {
       var conn = self._connections[id];
-      if (conn && conn.type === 'note') {
-        // For notes, close just minimizes (doesn't destroy)
-        self._engine.minimizeTerminal(id);
+      if (conn && conn.type === 'editor') {
+        self._closeFilePanel(id);
       } else {
         self._sendDestroyTerminal(id);
       }
@@ -170,7 +167,7 @@
           // Re-resolve colors for terminals that inherit from folders
           Object.keys(self._connections).forEach(function (id) {
             var conn = self._connections[id];
-            if (!conn || conn.type === 'note') return;
+            if (!conn || conn.type === 'editor') return;
             var rawBg = conn.config.headerBg;
             var rawColor = conn.config.headerColor;
             if (rawBg === 'inherit' || rawColor === 'inherit') {
@@ -195,9 +192,6 @@
           break;
         case 'task_complete':
           self._handleTaskComplete(msg);
-          break;
-        case 'note_saved':
-          self._handleNoteSaved(msg);
           break;
         case 'pane_context':
           self._handlePaneContext(msg);
@@ -234,25 +228,26 @@
     }
   };
 
-  App.prototype._deleteNote = function (id) {
+  App.prototype._closeFilePanel = function (id) {
     var conn = this._connections[id];
     if (!conn) return;
     var name = (conn.config && conn.config.name) || id;
-    var isEditor = conn.type === 'editor';
-    var isWorkspaceFile = conn.config && conn.config.file && conn.config.file.startsWith('/');
-    var msg = isEditor
-      ? 'Close "' + name + '"? Unsaved changes will be saved first.'
-      : isWorkspaceFile
-        ? 'Close note "' + name + '"? The file will NOT be deleted.'
-        : 'Delete note "' + name + '"? The file will be removed.';
-    if (!confirm(msg)) return;
+    if (conn.isDirty && conn.isDirty()) {
+      if (!confirm('Close "' + name + '"? Unsaved changes will be saved first.')) return;
+    }
 
     var self = this;
-    fetch('/api/notes/' + encodeURIComponent(id) + '?deleteFile=true', {
-      method: 'DELETE'
+    var savePromise = (conn.isDirty && conn.isDirty() && conn.save)
+      ? conn.save()
+      : Promise.resolve();
+
+    savePromise.then(function () {
+      return fetch('/api/notes/' + encodeURIComponent(id) + '?deleteFile=false', {
+        method: 'DELETE'
+      });
     })
       .then(function (res) {
-        if (!res.ok) throw new Error('Delete failed: ' + res.status);
+        if (!res.ok) throw new Error('Close failed: ' + res.status);
         return res.json();
       })
       .then(function () {
@@ -266,7 +261,7 @@
         self._updateEmptyState();
       })
       .catch(function (err) {
-        console.error('[app] delete note error:', err);
+        console.error('[app] close file panel error:', err);
       });
   };
 
@@ -469,8 +464,8 @@
     currentIds.forEach(function (id) {
       if (!serverIds.has(id)) {
         var conn = self._connections[id];
-        // Don't remove note panels — they're managed separately
-        if (conn && conn.type === 'note') return;
+        // Don't remove editor panels — they're managed separately
+        if (conn && conn.type === 'editor') return;
         conn.destroy();
         if (self._engine) {
           self._engine._removeFromGrid(id);
@@ -566,8 +561,6 @@
 
     // Build dialog contents
     dialog.innerHTML = '';
-    var createType = 'terminal';
-
     var title = document.createElement('div');
     title.className = 'ephemeral-title';
     if (inFolderId) {
@@ -577,25 +570,9 @@
       }
       title.textContent = folderName ? 'New Terminal in \u201C' + folderName + '\u201D' : 'New Terminal in Folder';
     } else {
-      title.textContent = 'New Panel';
+      title.textContent = 'New Terminal';
     }
     dialog.appendChild(title);
-
-    // Type selector
-    var typeRow = document.createElement('div');
-    typeRow.className = 'ephemeral-type-row';
-
-    var terminalTypeBtn = document.createElement('button');
-    terminalTypeBtn.className = 'ephemeral-type-btn ephemeral-type-active';
-    terminalTypeBtn.textContent = 'Terminal';
-    typeRow.appendChild(terminalTypeBtn);
-
-    var noteTypeBtn = document.createElement('button');
-    noteTypeBtn.className = 'ephemeral-type-btn';
-    noteTypeBtn.textContent = 'Note';
-    typeRow.appendChild(noteTypeBtn);
-
-    dialog.appendChild(typeRow);
 
     // Name field
     var nameField = self._buildNameField();
@@ -645,37 +622,6 @@
       terminalOnlyEls.push(textSwatches);
     }
 
-    // Track terminal-only elements for visibility toggling
-    terminalOnlyEls.push(cmdLabelRow, cmdInput, infoTip);
-
-    function setType(type) {
-      createType = type;
-      if (type === 'terminal') {
-        terminalTypeBtn.classList.add('ephemeral-type-active');
-        noteTypeBtn.classList.remove('ephemeral-type-active');
-        terminalOnlyEls.forEach(function (el) { el.style.display = ''; });
-        nameInput.placeholder = 'Session name';
-        nameInput.value = self._nextDefaultName();
-      } else {
-        noteTypeBtn.classList.add('ephemeral-type-active');
-        terminalTypeBtn.classList.remove('ephemeral-type-active');
-        terminalOnlyEls.forEach(function (el) { el.style.display = 'none'; });
-        nameInput.placeholder = 'Note name';
-        nameInput.value = 'New Note';
-      }
-      nameInput.focus();
-      nameInput.select();
-    }
-
-    terminalTypeBtn.addEventListener('click', function (e) {
-      e.stopPropagation();
-      setType('terminal');
-    });
-    noteTypeBtn.addEventListener('click', function (e) {
-      e.stopPropagation();
-      setType('note');
-    });
-
     // Buttons
     var btnRow = document.createElement('div');
     btnRow.className = 'edit-btn-row';
@@ -701,12 +647,8 @@
         nameInput.focus();
         return;
       }
-      if (createType === 'note') {
-        self._createNoteViaApi(name);
-      } else {
-        var command = cmdInput.value.trim();
-        self._sendCreateTerminal(name, command, selectedBg, selectedColor, inFolderId || null);
-      }
+      var command = cmdInput.value.trim();
+      self._sendCreateTerminal(name, command, selectedBg, selectedColor, inFolderId || null);
       closeDialog();
     });
     btnRow.appendChild(createBtn);
@@ -841,7 +783,12 @@
         if (self._engine) self._engine.minimizeTerminal(id);
       };
       this._terminalList.onClose = function (id) {
-        self._sendDestroyTerminal(id);
+        var conn = self._connections[id];
+        if (conn && conn.type === 'editor') {
+          self._closeFilePanel(id);
+        } else {
+          self._sendDestroyTerminal(id);
+        }
       };
       this._terminalList.onSelect = function (id) {
         self._handleTerminalListSelect(id);
@@ -881,19 +828,6 @@
       });
     }
 
-    var noteContainer = document.getElementById('note-list');
-    if (noteContainer && ns.TerminalList) {
-      this._noteList = new ns.TerminalList(noteContainer);
-      this._noteList.onMinimize = function (id) {
-        if (self._engine) self._engine.minimizeTerminal(id);
-      };
-      this._noteList.onClose = function (id) {
-        self._deleteNote(id);
-      };
-      this._noteList.onSelect = function (id) {
-        self._handleTerminalListSelect(id);
-      };
-    }
   };
 
   App.prototype._initSidebarSections = function () {
@@ -912,14 +846,12 @@
 
     var self = this;
     var terminalItems = [];
-    var noteItems = [];
 
     Object.keys(this._connections).forEach(function (id) {
       var conn = self._connections[id];
       var name = conn.config.name || id;
       var location = 'Minimized';
       var active = conn.isActive();
-      var isNote = conn.type === 'note';
       var isEditor = conn.type === 'editor';
 
       for (var i = 0; i < self._engine._cells.length; i++) {
@@ -931,23 +863,14 @@
         }
       }
 
-      if (isNote || isEditor) {
-        var displayName = name;
-        if (conn.isDirty && conn.isDirty()) displayName = name + ' *';
-        noteItems.push({ id: id, name: displayName, location: location, active: active, panelType: isEditor ? 'editor' : 'note' });
-      } else {
-        terminalItems.push({ id: id, name: name, location: location, active: active, panelType: 'terminal' });
-      }
+      var displayName = name;
+      if (isEditor && conn.isDirty && conn.isDirty()) displayName = name + ' *';
+      terminalItems.push({ id: id, name: displayName, location: location, active: active, panelType: isEditor ? 'editor' : 'terminal' });
     });
 
     if (this._terminalList) {
       this._terminalList.setFolderData(this._folders, this._sessionFolders);
       this._terminalList.render(terminalItems);
-    }
-
-    if (this._noteList) {
-      this._noteList.setFolderData([], {});
-      this._noteList.render(noteItems);
     }
 
     if (this._toolbarMode === 'sessions') {
@@ -997,6 +920,19 @@
     setTimeout(function () {
       cell.classList.remove('cell-highlight');
     }, 1500);
+  };
+
+  // --- Today Tasks ---
+
+  App.prototype._initTodayTasks = function () {
+    var listEl = document.getElementById('tt-list');
+    var addInput = document.getElementById('tt-add-input');
+    var dateLabelEl = document.getElementById('today-date-label');
+    var navLeftEl = document.getElementById('tt-nav-left');
+    var navRightEl = document.getElementById('tt-nav-right');
+    if (!listEl || !ns.TodayTasks) return;
+    this._todayTasks = new ns.TodayTasks(listEl, addInput, dateLabelEl, navLeftEl, navRightEl);
+    this._todayTasks.init();
   };
 
   // --- File Tree ---
@@ -1079,6 +1015,39 @@
 
     // Expose closeSidebar for use by terminal list selection
     this._closeSidebar = closeSidebar;
+
+    // --- Sidebar resize handle ---
+    var handle = document.getElementById('sidebar-resize-handle');
+    if (handle && !self._isMobile()) {
+      var startX, startW;
+
+      handle.addEventListener('mousedown', function (e) {
+        e.preventDefault();
+        startX = e.clientX;
+        startW = sidebar.getBoundingClientRect().width;
+        sidebar.classList.add('resizing');
+        handle.classList.add('active');
+
+        function onMouseMove(e) {
+          var newW = startW + (e.clientX - startX);
+          if (newW < 180) newW = 180;
+          var maxW = window.innerWidth * 0.5;
+          if (newW > maxW) newW = maxW;
+          sidebar.style.setProperty('--sidebar-width', newW + 'px');
+        }
+
+        function onMouseUp() {
+          document.removeEventListener('mousemove', onMouseMove);
+          document.removeEventListener('mouseup', onMouseUp);
+          sidebar.classList.remove('resizing');
+          handle.classList.remove('active');
+          refit();
+        }
+
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+      });
+    }
   };
 
   App.prototype._wireOrientationChange = function () {
@@ -1098,13 +1067,7 @@
     // Reject paths with shell metacharacters or control characters to prevent command injection
     if (/[;|&`$(){}[\]!#~\n\r\0]/.test(filePath)) return;
 
-    // Open .md files as notes (markdown editor with preview)
-    if (fileName.toLowerCase().endsWith('.md')) {
-      this._openFileAsNote(filePath);
-      return;
-    }
-
-    // Open other text files in the CodeMirror editor
+    // Open text files (including .md) in the CodeMirror editor
     if (ns.isTextFile && ns.isTextFile(fileName)) {
       this._openFileAsEditor(filePath);
       return;
@@ -1157,58 +1120,6 @@
       })
       .catch(function (err) {
         console.error('[app] openFileAsEditor failed:', err);
-      });
-  };
-
-  App.prototype._openFileAsNote = function (filePath) {
-    var self = this;
-    var absPath = '/workspace/' + filePath;
-
-    // Check if already open as a note connection
-    var existingId = null;
-    Object.keys(this._connections).forEach(function (id) {
-      var conn = self._connections[id];
-      if (conn.type === 'note' && conn.config && conn.config.file === absPath) {
-        existingId = id;
-      }
-    });
-
-    if (existingId) {
-      // Focus the existing note panel (highlight cell or restore from minimized)
-      this._handleTerminalListSelect(existingId);
-      return;
-    }
-
-    // Create/open the file as a note via API
-    fetch('/api/notes', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ filePath: filePath })
-    })
-      .then(function (res) {
-        if (!res.ok) throw new Error('Server returned ' + res.status);
-        return res.json();
-      })
-      .then(function (note) {
-        if (!note || !note.id) throw new Error('Invalid note response');
-
-        // If note already exists in connections (returned existing from server), just focus it
-        if (self._connections[note.id]) {
-          self._handleTerminalListSelect(note.id);
-          return;
-        }
-
-        var panel = new ns.NotePanel(note);
-        panel._onDirtyChange = function () {
-          self._syncTerminalList();
-        };
-        self._connections[note.id] = panel;
-        self._assignToFirstEmptyCell(note.id, panel);
-        self._updateEmptyState();
-        self._syncTerminalList();
-      })
-      .catch(function (err) {
-        console.error('[app] openFileAsNote failed:', err);
       });
   };
 
@@ -1453,7 +1364,7 @@
       }
     }
 
-    if (activeConn && activeConn.type === 'note') return null;
+    if (activeConn && activeConn.type === 'editor') return null;
     return activeConn;
   };
 
@@ -1615,7 +1526,7 @@
 
     ids.forEach(function (id) {
       var conn = self._connections[id];
-      if (conn.type === 'note') return; // Skip notes
+      if (conn.type === 'editor') return; // Skip editor panels
 
       var item = document.createElement('div');
       item.className = 'mt-session-item';
@@ -1709,8 +1620,8 @@
 
     if (!activeConn) return;
 
-    // Mobile toolbar only works with terminals, not note panels
-    if (activeConn.type === 'note') return;
+    // Mobile toolbar only works with terminals, not editor panels
+    if (activeConn.type === 'editor') return;
 
     var term = activeConn._terminal;
     var ws = activeConn._ws;
@@ -1986,79 +1897,12 @@
     }
   };
 
-  // --- Notes ---
-
-  App.prototype._loadNotes = function () {
-    var self = this;
-    return fetch('/api/notes')
-      .then(function (res) { return res.json(); })
-      .then(function (notes) {
-        self._applyNotes(notes);
-      })
-      .catch(function (err) {
-        console.error('[app] loadNotes error:', err);
-      });
-  };
-
-  App.prototype._applyNotes = function (notes) {
-    var self = this;
-    notes.forEach(function (n) {
-      if (self._connections[n.id]) return;
-      var panel = new ns.NotePanel(n);
-      panel._onDirtyChange = function () {
-        self._syncTerminalList();
-      };
-      self._connections[n.id] = panel;
-      self._assignToFirstEmptyCell(n.id, panel);
-    });
-    this._updateEmptyState();
-    this._syncTerminalList();
-  };
-
-  App.prototype._handleNoteSaved = function (msg) {
-    var conn = this._connections[msg.noteId];
-    if (conn && conn.type === 'note' && conn._easyMDE) {
-      // Another tab/client saved this note — reload if not dirty
-      if (!conn.isDirty()) {
-        conn._loadContent();
-      }
-    }
-  };
-
-  App.prototype._createNoteViaApi = function (name) {
-    var self = this;
-    return fetch('/api/notes', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: name })
-    })
-      .then(function (res) {
-        if (!res.ok) throw new Error('Server returned ' + res.status);
-        return res.json();
-      })
-      .then(function (note) {
-        if (!note || !note.id) throw new Error('Invalid note response');
-        var panel = new ns.NotePanel(note);
-        panel._onDirtyChange = function () {
-          self._syncTerminalList();
-        };
-        self._connections[note.id] = panel;
-        self._assignToFirstEmptyCell(note.id, panel);
-        self._updateEmptyState();
-        self._syncTerminalList();
-        return note;
-      })
-      .catch(function (err) {
-        console.error('[app] createNote failed:', err);
-      });
-  };
-
   App.prototype._wireBeforeUnload = function () {
     var self = this;
     window.addEventListener('beforeunload', function (e) {
       var hasDirty = Object.keys(self._connections).some(function (id) {
         var conn = self._connections[id];
-        return conn.type === 'note' && conn.isDirty();
+        return conn.type === 'editor' && conn.isDirty && conn.isDirty();
       });
       if (hasDirty) {
         e.preventDefault();

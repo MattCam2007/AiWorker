@@ -17,6 +17,9 @@ class MockTerminal {
       this._onResizeCallbacks.push(cb);
       return { dispose: sinon.stub() };
     });
+    this.onSelectionChange = sinon.stub().returns({ dispose: sinon.stub() });
+    this.getSelection = sinon.stub().returns('');
+    this.hasSelection = sinon.stub().returns(false);
     this.cols = 80;
     this.rows = 24;
   }
