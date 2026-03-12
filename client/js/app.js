@@ -21,6 +21,10 @@
     this._toolbarMode = 'keys';
     this._cmdsHistory = [];
     this._cmdsFuse = null;
+    this._terminalContexts = {}; // terminalId -> raw command name from tmux
+    this._currentContext = 'generic'; // resolved context category for active terminal
+    this._folders = [];
+    this._sessionFolders = {};
   }
 
   App.prototype.init = function () {
@@ -46,6 +50,9 @@
         self._initNotifications();
         self._connectControl();
 
+        return self._loadFolders();
+      })
+      .then(function () {
         return self._loadSessions();
       })
       .then(function () {
@@ -157,6 +164,26 @@
         case 'sessions':
           self._handleSessionsUpdate(msg.sessions);
           break;
+        case 'folders':
+          self._folders = msg.folders || [];
+          self._sessionFolders = msg.sessionFolders || {};
+          // Re-resolve colors for terminals that inherit from folders
+          Object.keys(self._connections).forEach(function (id) {
+            var conn = self._connections[id];
+            if (!conn || conn.type === 'note') return;
+            var rawBg = conn.config.headerBg;
+            var rawColor = conn.config.headerColor;
+            if (rawBg === 'inherit' || rawColor === 'inherit') {
+              var resolved = self._resolveTerminalColors(id, rawBg, rawColor);
+              conn.config.resolvedHeaderBg = resolved.bg;
+              conn.config.resolvedHeaderColor = resolved.color;
+              if (self._engine) {
+                self._engine.updateHeader(id, conn.config.name, resolved.bg, resolved.color);
+              }
+            }
+          });
+          self._syncTerminalList();
+          break;
         case 'config_reload':
           self._handleConfigReload(msg.config);
           break;
@@ -172,6 +199,9 @@
         case 'note_saved':
           self._handleNoteSaved(msg);
           break;
+        case 'pane_context':
+          self._handlePaneContext(msg);
+          break;
       }
     });
 
@@ -183,7 +213,7 @@
     });
   };
 
-  App.prototype._sendCreateTerminal = function (name, command, headerBg, headerColor) {
+  App.prototype._sendCreateTerminal = function (name, command, headerBg, headerColor, folderId) {
     if (this._controlWs && this._controlWs.readyState === WebSocket.OPEN) {
       this._controlWs.send(
         JSON.stringify({
@@ -191,7 +221,8 @@
           name: name,
           command: command,
           headerBg: headerBg || null,
-          headerColor: headerColor || null
+          headerColor: headerColor || null,
+          folderId: folderId || null
         })
       );
     }
@@ -207,10 +238,13 @@
     var conn = this._connections[id];
     if (!conn) return;
     var name = (conn.config && conn.config.name) || id;
+    var isEditor = conn.type === 'editor';
     var isWorkspaceFile = conn.config && conn.config.file && conn.config.file.startsWith('/');
-    var msg = isWorkspaceFile
-      ? 'Close note "' + name + '"? The file will NOT be deleted.'
-      : 'Delete note "' + name + '"? The file will be removed.';
+    var msg = isEditor
+      ? 'Close "' + name + '"? Unsaved changes will be saved first.'
+      : isWorkspaceFile
+        ? 'Close note "' + name + '"? The file will NOT be deleted.'
+        : 'Delete note "' + name + '"? The file will be removed.';
     if (!confirm(msg)) return;
 
     var self = this;
@@ -248,7 +282,69 @@
     }
   };
 
+  App.prototype._sendCreateFolder = function (name, parentId) {
+    if (this._controlWs && this._controlWs.readyState === WebSocket.OPEN) {
+      this._controlWs.send(JSON.stringify({ type: 'create_folder', name: name, parentId: parentId || null }));
+    }
+  };
+
+  App.prototype._sendUpdateFolder = function (id, updates) {
+    if (this._controlWs && this._controlWs.readyState === WebSocket.OPEN) {
+      this._controlWs.send(JSON.stringify(Object.assign({ type: 'update_folder', id: id }, updates)));
+    }
+  };
+
+  // Resolve 'inherit' color values by walking up the folder hierarchy.
+  // Returns { bg, color } with actual hex values or null.
+  App.prototype._resolveTerminalColors = function (terminalId, rawBg, rawColor) {
+    var bg = rawBg || null;
+    var color = rawColor || null;
+    if (bg !== 'inherit' && color !== 'inherit') {
+      return { bg: bg, color: color };
+    }
+    var folderId = this._sessionFolders[terminalId] || null;
+    var resolvedBg = bg === 'inherit' ? null : bg;
+    var resolvedColor = color === 'inherit' ? null : color;
+    while (folderId) {
+      var folder = null;
+      for (var i = 0; i < this._folders.length; i++) {
+        if (this._folders[i].id === folderId) { folder = this._folders[i]; break; }
+      }
+      if (!folder) break;
+      if (bg === 'inherit' && !resolvedBg && folder.headerBg) resolvedBg = folder.headerBg;
+      if (color === 'inherit' && !resolvedColor && folder.headerColor) resolvedColor = folder.headerColor;
+      if (resolvedBg && resolvedColor) break;
+      folderId = folder.parentId || null;
+    }
+    return { bg: resolvedBg || null, color: resolvedColor || null };
+  };
+
+  App.prototype._sendDeleteFolder = function (id) {
+    if (this._controlWs && this._controlWs.readyState === WebSocket.OPEN) {
+      this._controlWs.send(JSON.stringify({ type: 'delete_folder', id: id }));
+    }
+  };
+
+  App.prototype._sendMoveTerminal = function (terminalId, folderId) {
+    if (this._controlWs && this._controlWs.readyState === WebSocket.OPEN) {
+      this._controlWs.send(JSON.stringify({ type: 'move_terminal', id: terminalId, folderId: folderId || null }));
+    }
+  };
+
   // --- Session Management ---
+
+  App.prototype._loadFolders = function () {
+    var self = this;
+    return fetch('/api/folders')
+      .then(function (res) { return res.json(); })
+      .then(function (data) {
+        self._folders = data.folders || [];
+        self._sessionFolders = data.sessionFolders || {};
+      })
+      .catch(function (err) {
+        console.error('[app] loadFolders error:', err);
+      });
+  };
 
   App.prototype._loadSessions = function () {
     var self = this;
@@ -286,11 +382,14 @@
 
   App.prototype._createConnection = function (id, name, headerBg, headerColor) {
     var self = this;
+    var resolved = self._resolveTerminalColors(id, headerBg || null, headerColor || null);
     var conn = new ns.TerminalConnection(id, {
       name: name,
       theme: self._config.settings.theme,
       headerBg: headerBg || null,
-      headerColor: headerColor || null
+      headerColor: headerColor || null,
+      resolvedHeaderBg: resolved.bg,
+      resolvedHeaderColor: resolved.color
     });
 
     conn._onStatusChange = function () {
@@ -348,8 +447,11 @@
         conn.config.name = s.name;
         conn.config.headerBg = s.headerBg || null;
         conn.config.headerColor = s.headerColor || null;
+        var resolved = self._resolveTerminalColors(s.id, s.headerBg, s.headerColor);
+        conn.config.resolvedHeaderBg = resolved.bg;
+        conn.config.resolvedHeaderColor = resolved.color;
         if (self._engine) {
-          self._engine.updateHeader(s.id, s.name, s.headerBg, s.headerColor);
+          self._engine.updateHeader(s.id, s.name, resolved.bg, resolved.color);
         }
       }
     });
@@ -456,7 +558,7 @@
     });
   };
 
-  App.prototype._showCreateDialog = function () {
+  App.prototype._showCreateDialog = function (inFolderId) {
     var self = this;
     var dialog = document.getElementById('ephemeral-dialog');
     var backdrop = document.getElementById('ephemeral-backdrop');
@@ -468,7 +570,15 @@
 
     var title = document.createElement('div');
     title.className = 'ephemeral-title';
-    title.textContent = 'New Panel';
+    if (inFolderId) {
+      var folderName = '';
+      for (var fi = 0; fi < (self._folders || []).length; fi++) {
+        if (self._folders[fi].id === inFolderId) { folderName = self._folders[fi].name; break; }
+      }
+      title.textContent = folderName ? 'New Terminal in \u201C' + folderName + '\u201D' : 'New Terminal in Folder';
+    } else {
+      title.textContent = 'New Panel';
+    }
     dialog.appendChild(title);
 
     // Type selector
@@ -504,8 +614,8 @@
     dialog.appendChild(infoTip);
 
     // Header background color (terminal only)
-    var selectedBg = null;
-    var selectedColor = null;
+    var selectedBg = 'inherit';
+    var selectedColor = 'inherit';
     var terminalOnlyEls = [];
 
     if (this._engine) {
@@ -515,7 +625,7 @@
       dialog.appendChild(bgLabel);
       terminalOnlyEls.push(bgLabel);
 
-      var bgSwatches = this._engine._createColorSwatches(null, function (color) {
+      var bgSwatches = this._engine._createColorSwatches('inherit', true, function (color) {
         selectedBg = color;
       });
       dialog.appendChild(bgSwatches);
@@ -528,7 +638,7 @@
       dialog.appendChild(textLabel);
       terminalOnlyEls.push(textLabel);
 
-      var textSwatches = this._engine._createColorSwatches(null, function (color) {
+      var textSwatches = this._engine._createColorSwatches('inherit', true, function (color) {
         selectedColor = color;
       });
       dialog.appendChild(textSwatches);
@@ -595,7 +705,7 @@
         self._createNoteViaApi(name);
       } else {
         var command = cmdInput.value.trim();
-        self._sendCreateTerminal(name, command, selectedBg, selectedColor);
+        self._sendCreateTerminal(name, command, selectedBg, selectedColor, inFolderId || null);
       }
       closeDialog();
     });
@@ -736,6 +846,39 @@
       this._terminalList.onSelect = function (id) {
         self._handleTerminalListSelect(id);
       };
+      this._terminalList.onCreateFolder = function (name, parentId) {
+        self._sendCreateFolder(name, parentId);
+      };
+      this._terminalList.onRenameFolder = function (id, name) {
+        self._sendUpdateFolder(id, { name: name });
+      };
+      this._terminalList.onDeleteFolder = function (id) {
+        self._sendDeleteFolder(id);
+      };
+      this._terminalList.onToggleFolder = function (id, collapsed) {
+        self._sendUpdateFolder(id, { collapsed: collapsed });
+      };
+      this._terminalList.onMoveTerminal = function (terminalId, folderId) {
+        self._sendMoveTerminal(terminalId, folderId);
+      };
+      this._terminalList.onUpdateFolderColors = function (id, headerBg, headerColor) {
+        self._sendUpdateFolder(id, { headerBg: headerBg, headerColor: headerColor });
+      };
+      this._terminalList.onNewTerminalInFolder = function (folderId) {
+        self._showCreateDialog(folderId);
+      };
+    }
+
+    // "New folder" button in the Terminals section header
+    var newFolderBtn = document.getElementById('new-folder-btn');
+    if (newFolderBtn) {
+      newFolderBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var name = prompt('Folder name:');
+        if (name && name.trim()) {
+          self._sendCreateFolder(name.trim(), null);
+        }
+      });
     }
 
     var noteContainer = document.getElementById('note-list');
@@ -768,20 +911,17 @@
     if (!this._engine) return;
 
     var self = this;
-    var ids = Object.keys(this._connections);
+    var terminalItems = [];
+    var noteItems = [];
 
-    // Build sets of IDs currently in each list
-    var listedTerminals = this._terminalList ? new Set(this._terminalList._items.keys()) : new Set();
-    var listedNotes = this._noteList ? new Set(this._noteList._items.keys()) : new Set();
-
-    ids.forEach(function (id) {
+    Object.keys(this._connections).forEach(function (id) {
       var conn = self._connections[id];
       var name = conn.config.name || id;
       var location = 'Minimized';
       var active = conn.isActive();
       var isNote = conn.type === 'note';
+      var isEditor = conn.type === 'editor';
 
-      // Check if it's in a grid cell
       for (var i = 0; i < self._engine._cells.length; i++) {
         var cell = self._engine._cells[i];
         var info = self._engine._cellMap.get(cell);
@@ -791,33 +931,25 @@
         }
       }
 
-      if (isNote) {
-        // Add dirty indicator for notes
+      if (isNote || isEditor) {
         var displayName = name;
-        if (conn.isDirty && conn.isDirty()) {
-          displayName = name + ' *';
-        }
-        if (self._noteList) {
-          self._noteList.upsert(id, displayName, location, active, 'note');
-        }
-        listedNotes.delete(id);
+        if (conn.isDirty && conn.isDirty()) displayName = name + ' *';
+        noteItems.push({ id: id, name: displayName, location: location, active: active, panelType: isEditor ? 'editor' : 'note' });
       } else {
-        if (self._terminalList) {
-          self._terminalList.upsert(id, name, location, active, 'terminal');
-        }
-        listedTerminals.delete(id);
+        terminalItems.push({ id: id, name: name, location: location, active: active, panelType: 'terminal' });
       }
     });
 
-    // Remove stale entries
-    listedTerminals.forEach(function (id) {
-      if (self._terminalList) self._terminalList.remove(id);
-    });
-    listedNotes.forEach(function (id) {
-      if (self._noteList) self._noteList.remove(id);
-    });
+    if (this._terminalList) {
+      this._terminalList.setFolderData(this._folders, this._sessionFolders);
+      this._terminalList.render(terminalItems);
+    }
 
-    // Refresh mobile sessions panel if visible
+    if (this._noteList) {
+      this._noteList.setFolderData([], {});
+      this._noteList.render(noteItems);
+    }
+
     if (this._toolbarMode === 'sessions') {
       this._refreshSessionsPanel();
     }
@@ -966,13 +1098,66 @@
     // Reject paths with shell metacharacters or control characters to prevent command injection
     if (/[;|&`$(){}[\]!#~\n\r\0]/.test(filePath)) return;
 
-    // Open .md files as notes instead of in vi
+    // Open .md files as notes (markdown editor with preview)
     if (fileName.toLowerCase().endsWith('.md')) {
       this._openFileAsNote(filePath);
       return;
     }
 
+    // Open other text files in the CodeMirror editor
+    if (ns.isTextFile && ns.isTextFile(fileName)) {
+      this._openFileAsEditor(filePath);
+      return;
+    }
+
     this._sendCreateTerminal(fileName, 'vi /workspace/' + filePath);
+  };
+
+  App.prototype._openFileAsEditor = function (filePath) {
+    var self = this;
+    var absPath = '/workspace/' + filePath;
+
+    // Re-focus if already open
+    var existingId = null;
+    Object.keys(this._connections).forEach(function (id) {
+      var conn = self._connections[id];
+      if (conn.type === 'editor' && conn.config && conn.config.file === absPath) {
+        existingId = id;
+      }
+    });
+    if (existingId) {
+      this._handleTerminalListSelect(existingId);
+      return;
+    }
+
+    // Re-use the notes API – it stores file path + id, handles arbitrary files
+    fetch('/api/notes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filePath: filePath }),
+    })
+      .then(function (res) {
+        if (!res.ok) throw new Error('Server returned ' + res.status);
+        return res.json();
+      })
+      .then(function (file) {
+        if (!file || !file.id) throw new Error('Invalid response');
+
+        if (self._connections[file.id]) {
+          self._handleTerminalListSelect(file.id);
+          return;
+        }
+
+        var panel = new ns.EditorPanel(file);
+        panel._onDirtyChange = function () { self._syncTerminalList(); };
+        self._connections[file.id] = panel;
+        self._assignToFirstEmptyCell(file.id, panel);
+        self._updateEmptyState();
+        self._syncTerminalList();
+      })
+      .catch(function (err) {
+        console.error('[app] openFileAsEditor failed:', err);
+      });
   };
 
   App.prototype._openFileAsNote = function (filePath) {
@@ -1317,17 +1502,8 @@
   // --- Mobile Toolbar: Slash Commands Panel ---
 
   App.prototype._initSlashPanel = function () {
-    var self = this;
-    var toolbar = document.getElementById('mobile-toolbar');
-    if (!toolbar) return;
-
-    var btns = toolbar.querySelectorAll('.mt-slash-btn');
-    btns.forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        var text = btn.dataset.slash || btn.dataset.prompt;
-        if (text) self._typeAndSubmit(text);
-      });
-    });
+    // Render the default generic menu; context updates will swap it out
+    this._rebuildSlashPanel('generic');
   };
 
   // --- Mobile Toolbar: Cmds Mode ---
@@ -1489,6 +1665,8 @@
         }
         // Refresh the panel to update active state
         self._refreshSessionsPanel();
+        // Update context menu for the newly focused terminal
+        self._updateContextMenu(id);
       });
 
       list.appendChild(item);
@@ -1702,6 +1880,18 @@
     document.addEventListener('click', ensureAudioCtx, { once: true });
     document.addEventListener('keydown', ensureAudioCtx, { once: true });
 
+    // Clear pending-notification pulse when a terminal cell gains focus
+    document.addEventListener('focusin', function (e) {
+      if (!self._engine) return;
+      for (var i = 0; i < self._engine._cells.length; i++) {
+        var cell = self._engine._cells[i];
+        if (cell.contains(e.target) && cell.classList.contains('cell-task-pending')) {
+          cell.classList.remove('cell-task-pending');
+          break;
+        }
+      }
+    });
+
     // Wire bell toggle button
     var toggleBtn = document.getElementById('notification-toggle-btn');
     if (toggleBtn) {
@@ -1777,13 +1967,20 @@
       var cell = this._engine._cells[i];
       var info = this._engine._cellMap.get(cell);
       if (info && info.terminalId === terminalId) {
+        var isActive = cell.contains(document.activeElement);
+
+        // Always do the one-shot flash
         cell.classList.remove('cell-task-complete');
-        // Force reflow to restart animation
         void cell.offsetWidth;
         cell.classList.add('cell-task-complete');
         setTimeout(function (c) {
           c.classList.remove('cell-task-complete');
         }, 1000, cell);
+
+        // If the terminal isn't focused, keep the border pulsing until the user activates it
+        if (!isActive) {
+          cell.classList.add('cell-task-pending');
+        }
         break;
       }
     }
@@ -1868,6 +2065,255 @@
         e.returnValue = '';
       }
     });
+  };
+
+  // --- Context-Aware Toolbar ---
+
+  // Maps tmux pane_current_command values to context categories.
+  // Edit docs/context-menus.md for the canonical reference.
+  var CONTEXT_MAP = {
+    'bash':    'shell',  'zsh':     'shell',  'sh':      'shell',
+    'fish':    'shell',  'dash':    'shell',  'ash':     'shell',
+    'ssh':     'shell',
+    'claude':  'claude',
+    'vim':     'vim',    'nvim':    'vim',    'vi':      'vim',
+    'nano':    'nano',
+    'less':    'pager',  'more':    'pager',  'man':     'pager',
+    'python':  'python', 'python3': 'python', 'ipython': 'python',
+    'node':    'node',
+    'htop':    'monitor','top':     'monitor','btop':    'monitor'
+  };
+
+  // Tab labels for each context.
+  var CONTEXT_LABELS = {
+    shell:   'Shell',
+    claude:  'Claude',
+    vim:     'Vim',
+    nano:    'Nano',
+    pager:   'Pager',
+    python:  'Python',
+    node:    'Node',
+    monitor: 'Monitor',
+    generic: 'Cmds'
+  };
+
+  // Menu definitions for each context.
+  // Each button: { label, text, type }
+  //   type 'submit' -> text + Enter
+  //   type 'slash'  -> text + Enter, displayed with '/' prefix via CSS
+  //   type 'raw'    -> text only, no Enter
+  //   type 'ctrl'   -> sends raw escape sequence (text IS the sequence)
+  //
+  // Rows 1-2 always visible, rows 3-4 shown when toolbar is expanded.
+  // Edit this object freely — it is the only place you need to change menus.
+  var CONTEXT_MENUS = {
+    shell: [
+      { label: 'git status',  text: 'git status',           type: 'submit' },
+      { label: 'git diff',    text: 'git diff',             type: 'submit' },
+      { label: 'git log',     text: 'git log --oneline -10',type: 'submit' },
+      { label: 'ls -la',      text: 'ls -la',               type: 'submit' },
+      { label: 'cd ..',       text: 'cd ..',                type: 'submit' },
+      { label: 'clear',       text: 'clear',                type: 'submit' },
+      { label: 'pwd',         text: 'pwd',                  type: 'submit' },
+      { label: 'exit',        text: 'exit',                 type: 'submit' },
+      // expanded rows
+      { label: 'git add -A',  text: 'git add -A',           type: 'submit' },
+      { label: 'git commit',  text: 'git commit',           type: 'submit' },
+      { label: 'git push',    text: 'git push',             type: 'submit' },
+      { label: 'git pull',    text: 'git pull',             type: 'submit' },
+      { label: 'docker ps',   text: 'docker ps',            type: 'submit' },
+      { label: 'npm run',     text: 'npm run ',             type: 'raw'    },
+      { label: 'make',        text: 'make',                 type: 'submit' },
+      { label: 'grep -r',     text: 'grep -r "" .',         type: 'raw'    }
+    ],
+    claude: [
+      { label: 'clear',       text: '/clear',               type: 'slash'  },
+      { label: 'compact',     text: '/compact',             type: 'slash'  },
+      { label: 'status',      text: '/status',              type: 'slash'  },
+      { label: 'help',        text: '/help',                type: 'slash'  },
+      { label: 'commit',      text: '/commit',              type: 'slash'  },
+      { label: 'review',      text: '/review',              type: 'slash'  },
+      { label: 'fast',        text: '/fast',                type: 'slash'  },
+      { label: 'exit',        text: '/exit',                type: 'slash'  },
+      // expanded rows
+      { label: 'commit & push', text: 'commit and push',   type: 'submit' },
+      { label: 'run tests',   text: 'run tests',            type: 'submit' },
+      { label: 'git status',  text: 'git status',           type: 'submit' },
+      { label: 'git log',     text: 'git log --oneline -10',type: 'submit' },
+      { label: 'explain error',text: 'explain this error',  type: 'submit' },
+      { label: 'fix bug',     text: 'fix the bug',          type: 'submit' },
+      { label: 'summarize',   text: 'summarize changes',    type: 'submit' },
+      { label: 'undo',        text: 'undo last change',     type: 'submit' }
+    ],
+    vim: [
+      { label: ':w',          text: ':w',                   type: 'submit' },
+      { label: ':q',          text: ':q',                   type: 'submit' },
+      { label: ':wq',         text: ':wq',                  type: 'submit' },
+      { label: ':q!',         text: ':q!',                  type: 'submit' },
+      { label: 'i',           text: 'i',                    type: 'raw'    },
+      { label: 'v',           text: 'v',                    type: 'raw'    },
+      { label: '/',           text: '/',                    type: 'raw'    },
+      { label: 'u',           text: 'u',                    type: 'raw'    },
+      // expanded rows
+      { label: ':wqa',        text: ':wqa',                 type: 'submit' },
+      { label: 'dd',          text: 'dd',                   type: 'raw'    },
+      { label: 'yy',          text: 'yy',                   type: 'raw'    },
+      { label: 'p',           text: 'p',                    type: 'raw'    },
+      { label: 'gg',          text: 'gg',                   type: 'raw'    },
+      { label: 'G',           text: 'G',                    type: 'raw'    },
+      { label: ':s/',         text: ':s/',                  type: 'raw'    },
+      { label: ':%s/',        text: ':%s/',                 type: 'raw'    }
+    ],
+    pager: [
+      { label: 'q',           text: 'q',                    type: 'raw'    },
+      { label: '/',           text: '/',                    type: 'raw'    },
+      { label: 'n',           text: 'n',                    type: 'raw'    },
+      { label: 'N',           text: 'N',                    type: 'raw'    },
+      { label: 'g',           text: 'g',                    type: 'raw'    },
+      { label: 'G',           text: 'G',                    type: 'raw'    },
+      { label: 'space',       text: ' ',                    type: 'raw'    },
+      { label: 'b',           text: 'b',                    type: 'raw'    },
+      // expanded rows
+      { label: 'h',           text: 'h',                    type: 'raw'    },
+      { label: 'd',           text: 'd',                    type: 'raw'    },
+      { label: 'u',           text: 'u',                    type: 'raw'    },
+      { label: 'F',           text: 'F',                    type: 'raw'    }
+    ],
+    python: [
+      { label: 'exit()',      text: 'exit()',               type: 'submit' },
+      { label: 'help()',      text: 'help()',               type: 'submit' },
+      { label: 'import ',     text: 'import ',              type: 'raw'    },
+      { label: 'dir()',       text: 'dir()',                type: 'submit' },
+      { label: 'print()',     text: 'print()',              type: 'raw'    },
+      { label: 'type()',      text: 'type()',               type: 'raw'    },
+      { label: 'len()',       text: 'len()',                type: 'raw'    },
+      { label: 'list()',      text: 'list()',               type: 'raw'    },
+      // expanded rows
+      { label: 'try:',        text: 'try:',                 type: 'submit' },
+      { label: 'for i in',    text: 'for i in ',            type: 'raw'    },
+      { label: 'def ',        text: 'def ',                 type: 'raw'    },
+      { label: 'class ',      text: 'class ',               type: 'raw'    }
+    ],
+    node: [
+      { label: '.exit',       text: '.exit',                type: 'submit' },
+      { label: '.help',       text: '.help',                type: 'submit' },
+      { label: '.break',      text: '.break',               type: 'submit' },
+      { label: '.clear',      text: '.clear',               type: 'submit' },
+      { label: 'require()',   text: 'require()',            type: 'raw'    },
+      { label: 'console.log()',text: 'console.log()',       type: 'raw'    },
+      { label: 'typeof ',     text: 'typeof ',              type: 'raw'    },
+      { label: 'JSON.str()',  text: 'JSON.stringify()',     type: 'raw'    },
+      // expanded rows
+      { label: 'process.exit()',text: 'process.exit()',     type: 'submit' },
+      { label: 'async ',      text: 'async ',               type: 'raw'    },
+      { label: 'const ',      text: 'const ',               type: 'raw'    },
+      { label: 'function ',   text: 'function ',            type: 'raw'    }
+    ],
+    nano: [
+      { label: 'Ctrl+O save', text: '\x0f',                type: 'ctrl'   },
+      { label: 'Ctrl+X exit', text: '\x18',                type: 'ctrl'   },
+      { label: 'Ctrl+W find', text: '\x17',                type: 'ctrl'   },
+      { label: 'Ctrl+K cut',  text: '\x0b',                type: 'ctrl'   },
+      { label: 'Ctrl+U paste',text: '\x15',                type: 'ctrl'   },
+      { label: 'Ctrl+G help', text: '\x07',                type: 'ctrl'   },
+      { label: 'Ctrl+C pos',  text: '\x03',                type: 'ctrl'   },
+      { label: 'Ctrl+_ goto', text: '\x1f',                type: 'ctrl'   }
+    ],
+    monitor: [
+      { label: 'q',           text: 'q',                    type: 'raw'    },
+      { label: '/',           text: '/',                    type: 'raw'    },
+      { label: 'k',           text: 'k',                    type: 'raw'    },
+      { label: 'F5',          text: '\x1b[15~',             type: 'ctrl'   },
+      { label: 'F6',          text: '\x1b[17~',             type: 'ctrl'   },
+      { label: 'F9',          text: '\x1b[20~',             type: 'ctrl'   },
+      { label: 'space',       text: ' ',                    type: 'raw'    },
+      { label: 'u',           text: 'u',                    type: 'raw'    }
+    ],
+    generic: [
+      { label: 'Ctrl+C',      text: '\x03',                type: 'ctrl'   },
+      { label: 'Ctrl+D',      text: '\x04',                type: 'ctrl'   },
+      { label: 'Ctrl+Z',      text: '\x1a',                type: 'ctrl'   },
+      { label: 'q',           text: 'q',                    type: 'raw'    },
+      { label: 'exit',        text: 'exit',                 type: 'submit' },
+      { label: 'quit',        text: 'quit',                 type: 'submit' },
+      { label: 'help',        text: 'help',                 type: 'submit' },
+      { label: ':q',          text: ':q',                   type: 'submit' }
+    ]
+  };
+
+  App.prototype._handlePaneContext = function (msg) {
+    var self = this;
+    var contexts = msg.contexts || {};
+    // Merge incoming changes into our state
+    Object.keys(contexts).forEach(function (id) {
+      self._terminalContexts[id] = contexts[id];
+    });
+    // If the active terminal was in the update, refresh the panel
+    var activeConn = this._getActiveTerminalConnection();
+    if (activeConn && activeConn.id && (activeConn.id in contexts)) {
+      this._updateContextMenu(activeConn.id);
+    }
+  };
+
+  // Call when active terminal changes or context changes to sync the panel.
+  App.prototype._updateContextMenu = function (terminalId) {
+    var rawCmd = this._terminalContexts[terminalId] || '';
+    var context = CONTEXT_MAP[rawCmd] || 'generic';
+    if (context === this._currentContext) return;
+    this._currentContext = context;
+    this._rebuildSlashPanel(context);
+  };
+
+  // Rebuild the slash panel grid with the buttons for a given context.
+  App.prototype._rebuildSlashPanel = function (context) {
+    var self = this;
+    var grid = document.getElementById('mt-slash-grid');
+    if (!grid) return;
+
+    var buttons = CONTEXT_MENUS[context] || CONTEXT_MENUS.generic;
+    grid.innerHTML = '';
+
+    buttons.forEach(function (btn, idx) {
+      var el = document.createElement('button');
+      el.className = 'mt-slash-btn';
+      // Rows 3+ (idx >= 8) are expanded-only
+      if (idx >= 8) el.classList.add('mt-slash-extra');
+      // Slash type gets CSS '/' prefix
+      if (btn.type === 'slash') el.dataset.slash = btn.text;
+
+      el.textContent = btn.label;
+
+      el.addEventListener('click', function () {
+        if (btn.type === 'submit' || btn.type === 'slash') {
+          self._typeAndSubmit(btn.text);
+        } else {
+          // 'raw' and 'ctrl': send without Enter
+          self._typeRaw(btn.text);
+        }
+      });
+
+      grid.appendChild(el);
+    });
+
+    // Update the tab label to reflect context
+    var slashTab = document.querySelector('.mt-mode-tab[data-mode="slash"]');
+    if (slashTab) {
+      slashTab.textContent = CONTEXT_LABELS[context] || 'Cmds';
+    }
+  };
+
+  // Send text to the active terminal WITHOUT appending Enter.
+  // Used for raw keys (vim motions, pager navigation, partial input).
+  App.prototype._typeRaw = function (text) {
+    var self = this;
+    var chars = text.split('');
+    var i = 0;
+    (function next() {
+      if (i < chars.length) {
+        self._sendToActiveTerminal(chars[i++]);
+        setTimeout(next, 10);
+      }
+    })();
   };
 
   ns.App = App;

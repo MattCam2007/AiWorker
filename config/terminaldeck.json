@@ -57,5 +57,91 @@
       ]
     }
   },
-  "notes": []
+  "notes": [
+    {
+      "id": "readme",
+      "name": "README.md",
+      "file": "/workspace/RealEstateDemo/README.md"
+    },
+    {
+      "id": "ha-audit-report",
+      "name": "ha_audit_report.md",
+      "file": "/workspace/HA/ha_audit_report.md"
+    },
+    {
+      "id": "malware-forensic-report",
+      "name": "MALWARE_FORENSIC_REPORT.md",
+      "file": "/workspace/RealEstateDemo/MALWARE_FORENSIC_REPORT.md"
+    },
+    {
+      "id": "mobile-scroll-ideas-25",
+      "name": "mobile-scroll-ideas-25.md",
+      "file": "/workspace/AiWorker/docs/mobile-scroll-ideas-25.md"
+    },
+    {
+      "id": "phase-1-and-2-plan",
+      "name": "PHASE_1_AND_2_PLAN.md",
+      "file": "/workspace/AiWorker/SecurityTemp/PHASE_1_AND_2_PLAN.md"
+    },
+    {
+      "id": "claude",
+      "name": "CLAUDE.md",
+      "file": "/workspace/grocery-optimizer/CLAUDE.md"
+    },
+    {
+      "id": "setup",
+      "name": "SETUP.md",
+      "file": "/workspace/grocery-optimizer/SETUP.md"
+    },
+    {
+      "id": "gethome-html",
+      "name": "gethome html",
+      "file": "gethome-html.md"
+    },
+    {
+      "id": "gethome-css",
+      "name": "gethome css",
+      "file": "gethome-css.md"
+    },
+    {
+      "id": "entrypoint",
+      "name": "entrypoint.sh",
+      "file": "/workspace/grocery-optimizer/entrypoint.sh"
+    },
+    {
+      "id": "requirements",
+      "name": "requirements.txt",
+      "file": "/workspace/grocery-optimizer/requirements.txt"
+    },
+    {
+      "id": "app",
+      "name": "app.html",
+      "file": "/workspace/listdeck/static/app.html"
+    },
+    {
+      "id": "index",
+      "name": "index.html",
+      "file": "/workspace/sailship/src/index.html"
+    },
+    {
+      "id": "activity",
+      "name": "activity.js",
+      "file": "/workspace/AiWorker/server/activity.js"
+    },
+    {
+      "id": "app-2",
+      "name": "app.py",
+      "file": "/workspace/listdeck/app.py"
+    },
+    {
+      "id": "docker-compose",
+      "name": "docker-compose.yml",
+      "file": "/workspace/listdeck/docker-compose.yml"
+    },
+    {
+      "id": "env",
+      "name": "env.py",
+      "file": "/workspace/listdeck/migrations/env.py"
+    }
+  ]
 }

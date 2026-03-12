@@ -8,13 +8,21 @@ services:
       - ./client:/app/client
       - ./config:/app/config
       - ${WORKSPACE_PATH:-./workspace}:/workspace
-      - ${SSH_KEYS_PATH:-/dev/null}:/home/terminaldeck/.ssh:ro
       - ${SSH_AUTH_SOCK:-/dev/null}:/ssh-agent
       - ${CLAUDE_CONFIG_PATH:-/dev/null}:/home/terminaldeck/.claude
       - ${CLAUDE_JSON_PATH:-/dev/null}:/home/terminaldeck/.claude.json
     environment:
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
-      - TERMINALDECK_PORT=3000
+      - TERMINALDECK_PORT=3001
       - SSH_AUTH_SOCK=/ssh-agent
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+      - DAC_OVERRIDE
+    security_opt:
+      - no-new-privileges:true
     restart: unless-stopped

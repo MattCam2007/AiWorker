@@ -46,7 +46,25 @@
       "Bash(git worktree:*)",
       "Bash(git merge:*)",
       "Bash(git rm:*)",
-      "Bash(git:*)"
+      "Bash(git:*)",
+      "Bash(chmod +x:*)",
+      "Bash(tmux:*)",
+      "Bash(npm info:*)",
+      "Bash(ps aux:*)",
+      "Bash(jq:*)",
+      "Bash(sudo apt-get:*)",
+      "Bash(apt-get:*)",
+      "Bash(export:*)",
+      "Bash(~/go/bin/go-spotify-cli:*)",
+      "WebFetch(domain:developer.spotify.com)",
+      "Bash(apt list:*)",
+      "Bash(node -e \"require\\('./server/websocket'\\)\" 2>&1 | head -5)",
+      "Bash(node -e \"require\\('./server/index'\\)\" 2>&1 | head -5)",
+      "Bash(echo \"SSH_AUTH_SOCK on host: $SSH_AUTH_SOCK\")",
+      "Read(//workspace/AiWorker/**)",
+      "Read(//ssh-agent/**)",
+      "Bash(ssh-add -l)",
+      "Bash(npx esbuild:*)"
     ]
   }
 }

@@ -298,13 +298,13 @@
 
     header.style.display = '';
 
-    // Apply stored header colors
-    if (connection.config.headerBg) {
-      header.style.background = connection.config.headerBg;
-    }
-    if (connection.config.headerColor) {
-      header.style.color = connection.config.headerColor;
-    }
+    // Apply stored header colors (use resolved value for 'inherit')
+    var effectiveBg = connection.config.resolvedHeaderBg ||
+      (connection.config.headerBg && connection.config.headerBg !== 'inherit' ? connection.config.headerBg : null);
+    var effectiveColor = connection.config.resolvedHeaderColor ||
+      (connection.config.headerColor && connection.config.headerColor !== 'inherit' ? connection.config.headerColor : null);
+    if (effectiveBg) header.style.background = effectiveBg;
+    if (effectiveColor) header.style.color = effectiveColor;
 
     if (!skipAttach) {
       // Attach to mount point
@@ -467,9 +467,10 @@
     popover.appendChild(bgLabel);
 
     var selectedBg = connection.config.headerBg || null;
-    var bgSwatches = this._createColorSwatches(selectedBg, function (color) {
+    var bgSwatches = this._createColorSwatches(selectedBg, true, function (color) {
       selectedBg = color;
-      header.style.background = color || '';
+      var displayBg = color === 'inherit' ? (connection.config.resolvedHeaderBg || '') : (color || '');
+      header.style.background = displayBg;
     });
     popover.appendChild(bgSwatches);
 
@@ -480,9 +481,10 @@
     popover.appendChild(textLabel);
 
     var selectedColor = connection.config.headerColor || null;
-    var textSwatches = this._createColorSwatches(selectedColor, function (color) {
+    var textSwatches = this._createColorSwatches(selectedColor, true, function (color) {
       selectedColor = color;
-      header.style.color = color || '';
+      var displayColor = color === 'inherit' ? (connection.config.resolvedHeaderColor || '') : (color || '');
+      header.style.color = displayColor;
     });
     popover.appendChild(textSwatches);
 
@@ -557,7 +559,12 @@
     }, 0);
   };
 
-  LayoutEngine.prototype._createColorSwatches = function (activeColor, onSelect) {
+  LayoutEngine.prototype._createColorSwatches = function (activeColor, allowInherit, onSelect) {
+    // Support old 2-arg call signature: _createColorSwatches(activeColor, onSelect)
+    if (typeof allowInherit === 'function') {
+      onSelect = allowInherit;
+      allowInherit = false;
+    }
     var colors = [
       '#1a1a2e', '#16213e', '#0f3460', '#1b1b2f', '#162447',
       '#1f4068', '#2d4059', '#3a3a5c', '#4a4a6a', '#2c3e50',
@@ -582,6 +589,23 @@
       onSelect(null);
     });
     container.appendChild(noneSwatch);
+
+    // "Inherit" swatch — use parent folder's color
+    if (allowInherit) {
+      var inheritSwatch = document.createElement('button');
+      inheritSwatch.className = 'edit-swatch edit-swatch-inherit';
+      if (activeColor === 'inherit') inheritSwatch.classList.add('edit-swatch-active');
+      inheritSwatch.title = 'Inherit from folder';
+      inheritSwatch.addEventListener('click', function (e) {
+        e.stopPropagation();
+        container.querySelectorAll('.edit-swatch').forEach(function (s) {
+          s.classList.remove('edit-swatch-active');
+        });
+        inheritSwatch.classList.add('edit-swatch-active');
+        onSelect('inherit');
+      });
+      container.appendChild(inheritSwatch);
+    }
 
     colors.forEach(function (color) {
       var swatch = document.createElement('button');

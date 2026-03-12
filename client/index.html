@@ -18,6 +18,8 @@
         <div class="section-header" data-section="terminals">
           <span class="section-toggle">&#9660;</span>
           <span class="section-title">Terminals</span>
+          <span class="section-header-spacer"></span>
+          <button id="new-folder-btn" class="ft-refresh-btn" title="New folder">&#128193;+</button>
         </div>
         <div id="terminal-list" class="section-content"></div>
       </div>
@@ -132,30 +134,9 @@
       <button class="mobile-toolbar-btn mobile-toolbar-extra" data-key="lt">&lt;</button>
       <button class="mobile-toolbar-btn mobile-toolbar-extra" data-key="gt">&gt;</button>
     </div>
-    <!-- Slash commands panel -->
+    <!-- Context-aware panel: populated dynamically by JS based on foreground process -->
     <div class="mt-panel" data-panel="slash">
-      <div class="mt-slash-grid">
-        <!-- Row 1: navigation & context -->
-        <button class="mt-slash-btn" data-slash="/clear">clear</button>
-        <button class="mt-slash-btn" data-slash="/compact">compact</button>
-        <button class="mt-slash-btn" data-slash="/status">status</button>
-        <button class="mt-slash-btn" data-slash="/help">help</button>
-        <!-- Row 2: actions -->
-        <button class="mt-slash-btn" data-slash="/commit">commit</button>
-        <button class="mt-slash-btn" data-slash="/review">review</button>
-        <button class="mt-slash-btn" data-slash="/fast">fast</button>
-        <button class="mt-slash-btn" data-slash="/exit">exit</button>
-        <!-- Row 3 (expanded): common prompts -->
-        <button class="mt-slash-btn mt-slash-extra" data-prompt="commit and push">commit &amp; push</button>
-        <button class="mt-slash-btn mt-slash-extra" data-prompt="run tests">run tests</button>
-        <button class="mt-slash-btn mt-slash-extra" data-prompt="git status">git status</button>
-        <button class="mt-slash-btn mt-slash-extra" data-prompt="git log --oneline -10">git log</button>
-        <!-- Row 4 (expanded): more prompts -->
-        <button class="mt-slash-btn mt-slash-extra" data-prompt="explain this error">explain error</button>
-        <button class="mt-slash-btn mt-slash-extra" data-prompt="fix the bug">fix bug</button>
-        <button class="mt-slash-btn mt-slash-extra" data-prompt="summarize changes">summarize</button>
-        <button class="mt-slash-btn mt-slash-extra" data-prompt="undo last change">undo</button>
-      </div>
+      <div class="mt-slash-grid" id="mt-slash-grid"></div>
     </div>
     <!-- Cmds panel -->
     <div class="mt-panel" data-panel="cmds">
@@ -175,8 +156,11 @@
   <script src="vendor/xterm-addon-fit.js"></script>
   <script src="vendor/fuse.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <!-- CodeMirror 6: bundled locally so it works offline / in Docker -->
+  <script src="vendor/codemirror6.bundle.js"></script>
   <script src="js/terminal.js"></script>
   <script src="js/note-panel.js"></script>
+  <script src="js/editor-panel.js"></script>
   <script src="js/layout.js"></script>
   <script src="js/filetree.js"></script>
   <script src="js/terminal-list.js"></script>

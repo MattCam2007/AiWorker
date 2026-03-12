@@ -1,6 +1,7 @@
 const fs = require('fs');
 const { WebSocketServer } = require('ws');
 const { ActivityTracker } = require('./activity');
+const { ForegroundTracker } = require('./foreground');
 const { readHistory } = require('./history');
 const { PromptDetector } = require('./prompt-detector');
 const log = require('./log');
@@ -9,6 +10,7 @@ const MAX_TERM_COLS = 500;
 const MAX_TERM_ROWS = 200;
 
 const PTY_GRACE_PERIOD = 30000; // 30s before killing orphaned PTY
+const CONTROL_RATE_LIMIT = 10;  // max control messages per second per client
 const HEARTBEAT_INTERVAL = 15000; // 15s ping interval
 const HEARTBEAT_TIMEOUT = 10000; // 10s to receive pong
 const MAX_REATTACH = 5; // max PTY re-attach attempts before giving up
@@ -20,10 +22,12 @@ class TerminalWSServer {
 
   constructor(httpServer, sessionManager, options = {}) {
     this._sessionManager = sessionManager;
+    this._folderManager = options.folderManager || null;
     this._serverToken = options.serverToken || null;
     // terminalId -> { pty, clients: Set<ws>, disconnectTimer, exited }
     this._terminals = new Map();
     this._activity = new ActivityTracker();
+    this._foreground = new ForegroundTracker();
 
     // Task completion detection: fires after substantial output followed by silence
     this._promptDetector = new PromptDetector((terminalId) => {
@@ -120,12 +124,34 @@ class TerminalWSServer {
   _handleControlConnection(ws) {
     this._controlClients.add(ws);
     ws._pendingPing = 0;
+    ws._ctrlRate = { count: 0, windowStart: Date.now() };
+
+    // Send initial folder state to newly connected client
+    if (this._folderManager) {
+      this._safeSend(ws, JSON.stringify({
+        type: 'folders',
+        folders: this._folderManager.getFolders(),
+        sessionFolders: this._folderManager.getSessionFolders()
+      }));
+    }
 
     ws.on('pong', () => {
       ws._pendingPing = 0;
     });
 
     ws.on('message', async (raw) => {
+      // Rate limit control messages
+      const now = Date.now();
+      if (now - ws._ctrlRate.windowStart > 1000) {
+        ws._ctrlRate.count = 0;
+        ws._ctrlRate.windowStart = now;
+      }
+      ws._ctrlRate.count++;
+      if (ws._ctrlRate.count > CONTROL_RATE_LIMIT) {
+        log.debug('[ws] control rate limit exceeded, dropping message');
+        return;
+      }
+
       let msg;
       try {
         msg = JSON.parse(raw.toString());
@@ -136,9 +162,13 @@ class TerminalWSServer {
       try {
         switch (msg.type) {
           case 'create_terminal': {
-            await this._sessionManager.createTerminal(
+            const created = await this._sessionManager.createTerminal(
               msg.name, msg.command, msg.headerBg, msg.headerColor
             );
+            if (msg.folderId && this._folderManager) {
+              try { this._folderManager.moveTerminal(created.id, msg.folderId); } catch {}
+              this._broadcastFolders();
+            }
             await this._broadcastSessions();
             break;
           }
@@ -146,6 +176,10 @@ class TerminalWSServer {
             if (!msg.id) break;
             log.warn(`[ws] destroy_terminal received for ${short(msg.id)} from control client`);
             await this._sessionManager.destroySession(msg.id);
+            if (this._folderManager) {
+              this._folderManager.moveTerminal(msg.id, null);
+              this._broadcastFolders();
+            }
             await this._broadcastSessions();
             break;
           }
@@ -157,6 +191,36 @@ class TerminalWSServer {
             if (msg.headerColor !== undefined) updates.headerColor = msg.headerColor;
             this._sessionManager.updateSession(msg.id, updates);
             await this._broadcastSessions();
+            break;
+          }
+          case 'create_folder': {
+            if (!this._folderManager) break;
+            this._folderManager.createFolder(msg.name, msg.parentId || null);
+            this._broadcastFolders();
+            break;
+          }
+          case 'update_folder': {
+            if (!this._folderManager || !msg.id) break;
+            const folderUpdates = {};
+            if (msg.name !== undefined) folderUpdates.name = msg.name;
+            if (msg.collapsed !== undefined) folderUpdates.collapsed = msg.collapsed;
+            if (msg.parentId !== undefined) folderUpdates.parentId = msg.parentId;
+            if (msg.headerBg !== undefined) folderUpdates.headerBg = msg.headerBg;
+            if (msg.headerColor !== undefined) folderUpdates.headerColor = msg.headerColor;
+            this._folderManager.updateFolder(msg.id, folderUpdates);
+            this._broadcastFolders();
+            break;
+          }
+          case 'delete_folder': {
+            if (!this._folderManager || !msg.id) break;
+            this._folderManager.deleteFolder(msg.id);
+            this._broadcastFolders();
+            break;
+          }
+          case 'move_terminal': {
+            if (!this._folderManager || !msg.id) break;
+            this._folderManager.moveTerminal(msg.id, msg.folderId || null);
+            this._broadcastFolders();
             break;
           }
         }
@@ -193,6 +257,15 @@ class TerminalWSServer {
   async _broadcastSessions() {
     const sessions = await this._sessionManager.listSessions();
     this._sendToControl({ type: 'sessions', sessions });
+  }
+
+  _broadcastFolders() {
+    if (!this._folderManager) return;
+    this._sendToControl({
+      type: 'folders',
+      folders: this._folderManager.getFolders(),
+      sessionFolders: this._folderManager.getSessionFolders()
+    });
   }
 
   broadcastConfigReload(config) {
@@ -398,6 +471,7 @@ class TerminalWSServer {
           terminal.outputBuffer = '';
           this._terminals.delete(terminalId);
           this._activity.removeTerminal(terminalId);
+          this._foreground.removeTerminal(terminalId);
           this._promptDetector.removeTerminal(terminalId);
         }, PTY_GRACE_PERIOD);
       }
@@ -408,6 +482,9 @@ class TerminalWSServer {
 
   startActivityBroadcasting() {
     this._activity.startBroadcasting((msg) => {
+      this._sendToControl(msg);
+    });
+    this._foreground.startBroadcasting(this._sessionManager, (msg) => {
       this._sendToControl(msg);
     });
   }

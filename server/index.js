@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const { ConfigManager } = require('./config');
 const { SessionManager } = require('./sessions');
+const { FolderManager } = require('./folders');
 const { TerminalWSServer } = require('./websocket');
 const { listDirectory } = require('./filetree');
 const { getHistoryFilePath, createHistoryRoute } = require('./history');
@@ -39,6 +40,7 @@ function setSecurityHeaders(res) {
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('X-XSS-Protection', '1; mode=block');
   res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Content-Security-Policy', "default-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:; connect-src 'self' ws: wss:; script-src 'self'");
 }
 
 function serveStatic(req, res) {
@@ -92,6 +94,10 @@ async function createApp(options = {}) {
   const sessionManager = new SessionManager(config);
   await sessionManager.discoverSessions();
 
+  const foldersPath = options.foldersPath || path.join(__dirname, '..', 'config', 'folders.json');
+  const folderManager = new FolderManager(foldersPath);
+  folderManager.load();
+
   const noteManager = new NoteManager(configManager);
 
   const server = http.createServer((req, res) => {
@@ -100,6 +106,16 @@ async function createApp(options = {}) {
       setSecurityHeaders(res);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ ...configManager.getConfig(), serverToken }));
+      return;
+    }
+
+    if (req.url === '/api/folders' && req.method === 'GET') {
+      setSecurityHeaders(res);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        folders: folderManager.getFolders(),
+        sessionFolders: folderManager.getSessionFolders()
+      }));
       return;
     }
 
@@ -283,7 +299,7 @@ async function createApp(options = {}) {
     serveStatic(req, res);
   });
 
-  const wsServer = new TerminalWSServer(server, sessionManager, { serverToken, configManager });
+  const wsServer = new TerminalWSServer(server, sessionManager, { serverToken, configManager, folderManager });
   wsServer.startActivityBroadcasting();
 
   sessionManager.on('sessionDied', () => { wsServer._broadcastSessions(); });

@@ -48,6 +48,9 @@
     // Open terminal in element
     this._terminal.open(el);
 
+    // Touch-friendly scroll rail overlay (auto-expanding, haptic feedback)
+    this._initScrollRail(el);
+
     // When keyboard is hidden, prevent ANY focus on the xterm textarea.
     // This catches xterm.js's own internal click→focus path.
     var textarea = this._terminal.textarea;
@@ -341,6 +344,10 @@
       clearTimeout(this._reconnectTimer);
       this._reconnectTimer = null;
     }
+    if (this._scrollObserver) {
+      this._scrollObserver.disconnect();
+      this._scrollObserver = null;
+    }
     if (this._terminal) {
       this._terminal.dispose();
       this._terminal = null;
@@ -360,6 +367,9 @@
   TerminalConnection.prototype.moveTo = function (newMount) {
     if (this._terminal && this._terminal.element) {
       newMount.appendChild(this._terminal.element);
+    }
+    if (this._scrollRail) {
+      newMount.appendChild(this._scrollRail);
     }
     this._element = newMount;
   };
@@ -419,6 +429,199 @@
   TerminalConnection.prototype.destroy = function () {
     this._destroyed = true;
     this.detach();
+  };
+
+  // ---------------------------------------------------------------
+  // Touch scroll rail: 4px indicator that expands to ~20px on grab.
+  // Provides drag-to-scroll on the xterm viewport scrollback buffer
+  // with haptic feedback at buffer boundaries.
+  // ---------------------------------------------------------------
+
+  TerminalConnection.prototype._initScrollRail = function (el) {
+    var self = this;
+
+    // Build DOM:  rail (touch target) > track (visible strip) > thumb
+    var rail = document.createElement('div');
+    rail.className = 'td-scroll-rail';
+
+    var track = document.createElement('div');
+    track.className = 'td-scroll-track';
+
+    var thumb = document.createElement('div');
+    thumb.className = 'td-scroll-thumb';
+
+    var posLabel = document.createElement('div');
+    posLabel.className = 'td-scroll-pos';
+
+    track.appendChild(thumb);
+    rail.appendChild(track);
+    rail.appendChild(posLabel);
+    el.appendChild(rail);
+
+    this._scrollRail = rail;
+
+    // Wait for xterm.js to render its viewport element
+    var viewport = el.querySelector('.xterm-viewport');
+    if (!viewport) {
+      setTimeout(function () {
+        var vp = el.querySelector('.xterm-viewport');
+        if (vp) self._wireScrollRail(rail, track, thumb, posLabel, vp);
+      }, 300);
+    } else {
+      this._wireScrollRail(rail, track, thumb, posLabel, viewport);
+    }
+  };
+
+  TerminalConnection.prototype._wireScrollRail = function (rail, track, thumb, posLabel, viewport) {
+    var self = this;
+    var dragging = false;
+    var collapseTimer = null;
+    var wasAtTop = false;
+    var wasAtBottom = true;
+
+    // --- Thumb position updater ---
+    function updateThumb() {
+      var sh = viewport.scrollHeight;
+      var ch = viewport.clientHeight;
+      var max = sh - ch;
+
+      if (max <= 0) {
+        rail.classList.add('td-scroll-hidden');
+        return;
+      }
+      rail.classList.remove('td-scroll-hidden');
+
+      var trackH = track.clientHeight;
+      if (trackH <= 0) return;
+
+      var thumbH = Math.max(24, (ch / sh) * trackH);
+      var ratio = viewport.scrollTop / max;
+      var thumbTop = ratio * (trackH - thumbH);
+
+      thumb.style.height = thumbH + 'px';
+      thumb.style.transform = 'translateY(' + thumbTop + 'px)';
+    }
+
+    viewport.addEventListener('scroll', updateThumb, { passive: true });
+
+    // Watch for content changes (new terminal output)
+    this._scrollObserver = new MutationObserver(function () {
+      requestAnimationFrame(updateThumb);
+    });
+    this._scrollObserver.observe(viewport, { childList: true, subtree: true });
+
+    // Initial update (wait for layout)
+    setTimeout(updateThumb, 400);
+
+    // Also update on refit
+    var origRefit = this.refit.bind(this);
+    this.refit = function () {
+      origRefit();
+      setTimeout(updateThumb, 50);
+    };
+
+    // --- Expand / collapse ---
+    function expand() {
+      clearTimeout(collapseTimer);
+      rail.classList.add('td-scroll-expanded');
+    }
+
+    function scheduleCollapse() {
+      clearTimeout(collapseTimer);
+      collapseTimer = setTimeout(function () {
+        if (!dragging) {
+          rail.classList.remove('td-scroll-expanded');
+          posLabel.classList.remove('td-scroll-pos-visible');
+        }
+      }, 1200);
+    }
+
+    // --- Scroll to touch position ---
+    function scrollToY(touchY) {
+      var rect = track.getBoundingClientRect();
+      var ratio = (touchY - rect.top) / rect.height;
+      ratio = Math.max(0, Math.min(1, ratio));
+      var max = viewport.scrollHeight - viewport.clientHeight;
+      var target = ratio * max;
+
+      // Haptic at boundaries
+      var atTop = ratio <= 0.001;
+      var atBottom = ratio >= 0.999;
+
+      if (atTop && !wasAtTop) {
+        if (navigator.vibrate) navigator.vibrate(15);
+        wasAtTop = true;
+      } else if (!atTop) {
+        wasAtTop = false;
+      }
+
+      if (atBottom && !wasAtBottom) {
+        if (navigator.vibrate) navigator.vibrate(15);
+        wasAtBottom = true;
+      } else if (!atBottom) {
+        wasAtBottom = false;
+      }
+
+      viewport.scrollTop = target;
+
+      // Update position label
+      if (self._terminal) {
+        var buf = self._terminal.buffer.active;
+        var currentLine = buf.viewportY + 1;
+        var totalLines = buf.length;
+        posLabel.textContent = currentLine + ' / ' + totalLines;
+        posLabel.classList.add('td-scroll-pos-visible');
+
+        // Position label near thumb
+        var thumbRect = thumb.getBoundingClientRect();
+        var railRect = rail.getBoundingClientRect();
+        var labelTop = thumbRect.top - railRect.top + (thumbRect.height / 2) - 10;
+        labelTop = Math.max(0, Math.min(railRect.height - 20, labelTop));
+        posLabel.style.top = labelTop + 'px';
+      }
+    }
+
+    // --- Touch handlers ---
+    rail.addEventListener('touchstart', function (e) {
+      if (e.touches.length !== 1) return;
+      e.preventDefault();
+      e.stopPropagation();
+      dragging = true;
+      expand();
+      scrollToY(e.touches[0].clientY);
+      if (navigator.vibrate) navigator.vibrate(8);
+    }, { passive: false });
+
+    rail.addEventListener('touchmove', function (e) {
+      if (!dragging) return;
+      e.preventDefault();
+      scrollToY(e.touches[0].clientY);
+    }, { passive: false });
+
+    rail.addEventListener('touchend', function () {
+      if (!dragging) return;
+      dragging = false;
+      scheduleCollapse();
+    });
+
+    // Mouse support (for desktop testing and usability)
+    rail.addEventListener('mousedown', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      dragging = true;
+      expand();
+      scrollToY(e.clientY);
+
+      function onMove(ev) { scrollToY(ev.clientY); }
+      function onUp() {
+        dragging = false;
+        scheduleCollapse();
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      }
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
   };
 
   ns.TerminalConnection = TerminalConnection;

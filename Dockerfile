@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y \
     procps \
     build-essential \
     python3 \
+    python3-pip \
     vim \
     gosu \
     bash-completion \
@@ -18,6 +19,9 @@ RUN apt-get update && apt-get install -y \
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
+
+# Install opencode
+RUN curl -fsSL https://opencode.ai/install | bash
 
 # Create app directory
 WORKDIR /app

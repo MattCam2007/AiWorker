@@ -80,6 +80,20 @@ if [ -f "$USER_HOME/.local/bin/claude" ]; then
     chown "$PUID:$PGID" "$CLAUDE_SETTINGS"
 fi
 
+# Harden npm and Node.js defaults (post-incident hardening — blob.js supply-chain attack).
+# ignore-scripts: blocks postinstall/preinstall/prepare lifecycle hooks that the malware
+#   used ("postinstall": "npm run start") to auto-execute on npm install.
+#   Users opt in per-command: npm install --ignore-scripts=false
+# NODE_OPTIONS=--disallow-code-generation-from-strings: makes V8 throw EvalError on
+#   eval(), new Function(), and Function.constructor() with string arguments — the exact
+#   mechanism blob.js used to execute its downloaded payload. Override per-command when
+#   needed: NODE_OPTIONS="" npm start
+NPMRC="$USER_HOME/.npmrc"
+if ! grep -q 'ignore-scripts=true' "$NPMRC" 2>/dev/null; then
+    echo "ignore-scripts=true" >> "$NPMRC"
+fi
+chown "$PUID:$PGID" "$NPMRC"
+
 # Fix ownership - top-level only (no recursive on /app to avoid slow node_modules chown)
 chown "$PUID:$PGID" /app
 chown -R "$PUID:$PGID" /app/config
@@ -90,6 +104,7 @@ export HOME="$USER_HOME"
 export USER="$USER_NAME"
 export PATH="$USER_HOME/.local/bin:$PATH"
 export DISABLE_AUTOUPDATER=1
+export NODE_OPTIONS="${NODE_OPTIONS:---disallow-code-generation-from-strings}"
 
 # Drop privileges and exec CMD
 exec gosu "$USER_NAME" "$@"

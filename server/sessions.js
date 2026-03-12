@@ -17,7 +17,7 @@ const TMUX_SOCKET = 'terminaldeck'; // Dedicated socket to isolate from processe
 const HEALTH_CHECK_INTERVAL = 10000; // 10s
 
 function isValidColor(val) {
-  return val === null || /^#[0-9a-fA-F]{6}$/.test(val);
+  return val === null || val === 'inherit' || /^#[0-9a-fA-F]{6}$/.test(val);
 }
 
 function isValidCommand(cmd) {
@@ -425,6 +425,33 @@ class SessionManager extends EventEmitter {
         }
       } catch {}
     }
+  }
+
+  async getForegroundCommands() {
+    // Single tmux call returns all panes across all sessions on this socket.
+    // Output format: "<session_name> <pane_current_command>" per line.
+    const { stdout } = await execFileAsync('tmux', [
+      '-L', this._tmuxSocket,
+      'list-panes', '-a',
+      '-F', '#{session_name} #{pane_current_command}'
+    ]);
+
+    const result = {};
+    for (const line of stdout.trim().split('\n')) {
+      if (!line) continue;
+      const spaceIdx = line.indexOf(' ');
+      if (spaceIdx === -1) continue;
+      const sessionName = line.slice(0, spaceIdx);
+      const cmd = line.slice(spaceIdx + 1).trim();
+      // Reverse-map session name to terminal id
+      for (const [id, session] of this._sessions) {
+        if (session.name === sessionName || this._tmuxSessionName(id) === sessionName) {
+          result[id] = cmd;
+          break;
+        }
+      }
+    }
+    return result;
   }
 
   async listSessions() {

@@ -16,6 +16,19 @@ async function listDirectory(dirPath) {
     throw err;
   }
 
+  // Resolve symlinks to prevent escaping /workspace via symlink targets
+  try {
+    const real = await fs.promises.realpath(resolved);
+    if (!real.startsWith(WORKSPACE_ROOT)) {
+      const err = new Error('Path traversal denied');
+      err.code = 'TRAVERSAL';
+      throw err;
+    }
+  } catch (err) {
+    if (err.code === 'TRAVERSAL') throw err;
+    // Directory doesn't exist — let readdir below handle the ENOENT
+  }
+
   const entries = await fs.promises.readdir(resolved, { withFileTypes: true });
 
   const results = [];

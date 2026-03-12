@@ -20,12 +20,23 @@ class NoteManager {
   }
 
   _isPathSafe(file) {
-    if (file.startsWith('/')) {
-      const resolved = path.resolve(file);
-      return resolved.startsWith('/workspace/');
+    const logical = file.startsWith('/')
+      ? path.resolve(file)
+      : path.resolve(this._notesDir, file);
+
+    // Logical path must be inside the allowed tree
+    const allowedRoot = file.startsWith('/') ? '/workspace/' : this._notesDir;
+    if (!logical.startsWith(allowedRoot) && logical !== this._notesDir) return false;
+
+    // Resolve symlinks to catch links that escape the allowed directory
+    try {
+      const real = fs.realpathSync(logical);
+      if (!real.startsWith(allowedRoot) && real !== this._notesDir) return false;
+    } catch (err) {
+      // File doesn't exist yet (new note) — logical check above is sufficient
     }
-    const resolved = path.resolve(this._notesDir, file);
-    return resolved.startsWith(this._notesDir + path.sep) || resolved === this._notesDir;
+
+    return true;
   }
 
   _fullPath(file) {
@@ -148,12 +159,20 @@ class NoteManager {
     var absPath = path.resolve('/workspace', workspaceRelPath);
     if (!absPath.startsWith('/workspace/')) return null;
 
+    // Resolve symlinks to prevent escaping /workspace via symlink targets
+    try {
+      var realPath = fs.realpathSync(absPath);
+      if (!realPath.startsWith('/workspace/')) return null;
+    } catch (err) {
+      // File doesn't exist — logical check above is sufficient
+    }
+
     // Return existing note if this file is already tracked
     var notes = this._getNotes();
     var existing = notes.find(function (n) { return n.file === absPath; });
     if (existing) return existing;
 
-    var baseName = path.basename(workspaceRelPath, '.md');
+    var baseName = path.basename(workspaceRelPath).replace(/\.[^.]+$/, '') || path.basename(workspaceRelPath);
     var slug = baseName.toLowerCase()
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-|-$/g, '') || 'file';

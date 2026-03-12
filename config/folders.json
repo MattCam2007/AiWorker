@@ -1,0 +1,27 @@
+{
+  "folders": [
+    {
+      "id": "6b9ff0be-8fad-4474-941e-87a95749593f",
+      "name": "ListDeck",
+      "parentId": null,
+      "collapsed": false,
+      "headerBg": "#33d9b2",
+      "headerColor": "#3a3a5c"
+    },
+    {
+      "id": "f9bc68f3-70bc-435e-8ea5-4fb6fd2cc7e5",
+      "name": "Ai worker",
+      "parentId": null,
+      "collapsed": false,
+      "headerBg": "#ffda79",
+      "headerColor": "#1e90ff"
+    }
+  ],
+  "sessionFolders": {
+    "c042b60a-ba39-4a0f-b9dc-aee994eb78f4": "f9bc68f3-70bc-435e-8ea5-4fb6fd2cc7e5",
+    "3f918472-4f62-4595-8d9b-c903569d3d48": "6b9ff0be-8fad-4474-941e-87a95749593f",
+    "c6f75b69-4fc3-492b-95d0-34b838c3ac91": "6b9ff0be-8fad-4474-941e-87a95749593f",
+    "4820b25d-20d8-4d2b-ab62-662a36d9aac8": "6b9ff0be-8fad-4474-941e-87a95749593f",
+    "242e09e9-786e-4e27-a3e9-12d921b97e21": "f9bc68f3-70bc-435e-8ea5-4fb6fd2cc7e5"
+  }
+}

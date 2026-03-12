@@ -248,6 +248,45 @@ Browser                    Server                     tmux
     └── build-report.md          # Detailed build report
 ```
 
+## SSH Agent Forwarding
+
+To use your host's SSH keys (e.g. for `git clone`) inside the container, forward your SSH agent socket.
+
+### Setup
+
+1. Ensure your SSH agent is running on the host and has keys loaded:
+
+```bash
+ssh-add -l
+```
+
+If no agent is running, start one:
+
+```bash
+eval $(ssh-agent)
+ssh-add
+```
+
+2. The `docker-compose.yml` mounts `$SSH_AUTH_SOCK` into the container. When starting with `sudo`, you **must** preserve environment variables with `-E`:
+
+```bash
+sudo -E docker compose up --build -d
+```
+
+Without `-E`, `sudo` strips `SSH_AUTH_SOCK` and Docker mounts `/dev/null` (the fallback) instead of the socket, which breaks SSH inside the container.
+
+3. Verify inside the container:
+
+```bash
+ssh-add -l    # Should list your host keys
+ssh -T git@github.com   # Should authenticate
+```
+
+### Troubleshooting SSH
+
+- **`Permission denied (publickey)`** — The agent socket wasn't forwarded. Make sure you used `sudo -E` and that `ssh-add -l` shows keys on the host before starting the container.
+- **`/ssh-agent` is a directory instead of a socket** — The container was started without `SSH_AUTH_SOCK` set. Fix the host environment and recreate: `sudo -E docker compose up -d --force-recreate`
+
 ## Troubleshooting
 
 **Terminals show "connecting..." but never connect**
