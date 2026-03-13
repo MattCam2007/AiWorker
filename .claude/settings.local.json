@@ -67,7 +67,28 @@
       "Bash(npx esbuild:*)",
       "Bash(npm list:*)",
       "Bash(npm ls:*)",
-      "Bash(grep -oP 'syncScrollArea\\\\\\([^\\)]*\\\\\\)\\\\{.{0,500}' /workspace/AiWorker/client/vendor/xterm.js | head -3)"
+      "Bash(grep -oP 'syncScrollArea\\\\\\([^\\)]*\\\\\\)\\\\{.{0,500}' /workspace/AiWorker/client/vendor/xterm.js | head -3)",
+      "Bash(find /workspace/AiWorker -type f \\\\\\( -name \"*.svg\" -o -name \"*.png\" -o -name \"*.ico\" -o -name \"*.woff*\" -o -name \"*.ttf\" \\\\\\) 2>/dev/null | head -20)",
+      "Read(//home/terminaldeck/.claude/**)",
+      "Bash(echo \"HOME=$HOME\")",
+      "Bash(curl -s \"http://localhost:3000/api/claude-files?path=.\" 2>&1)",
+      "Bash(netstat -tlnp)",
+      "Bash(printf '%d\\\\n' 0x60E3)",
+      "Bash(curl -s \"http://127.0.0.1:24803/api/claude-files?path=.\" 2>&1 | head -100)",
+      "Read(//home/terminaldeck/.local/bin/**)",
+      "Read(//usr/local/bin/**)",
+      "Read(//root/**)",
+      "Read(//usr/**)",
+      "Bash(ls -la /workspace/AiWorker/.git/opencode && /workspace/AiWorker/.git/opencode --version 2>/dev/null)",
+      "Bash(curl -fsSL https://opencode.ai/install 2>/dev/null | grep -E 'bin|install|DEST|PREFIX|local' | head -30)",
+      "Bash(node -e \"console.log\\(Object.keys\\(require\\('./server/sessions'\\)\\)\\)\" 2>&1)",
+      "Bash(curl -s http://localhost:3001/js/filetree.js | grep -n \"_onOpenTerminal\" | head -5)",
+      "Read(//app/**)",
+      "Read(//app/client/js/**)",
+      "Bash(curl -s http://localhost:3001/js/folder-cell.js | grep -n \"cell-header-more\\\\|cell-header-edit\\\\|cell-header-refresh\\\\|moreBtn\\\\|editBtn\\\\|refreshBtn\")",
+      "Bash(curl -s http://localhost:3001/css/style.css | grep -n \"cell-header-more\\\\|cell-header-edit\" | head -20)",
+      "Bash(curl -s http://localhost:3001/js/app.js | grep -n \"_onEditFolder\\\\|_showFolderSettingsDialog\\\\|startCommand\" | head -20)",
+      "Bash(curl -s http://localhost:3001/ | grep -c \"terminaldeck\\\\|TerminalDeck\" && curl -s http://localhost:3001/js/layout.js | grep -c \"_showFolderMoreMenu\")"
     ]
   }
 }

@@ -9,6 +9,155 @@
 
   var AUTOSAVE_DELAY = 3000;
 
+  // ---------------------------------------------------------------------------
+  //  Intelligent autocomplete sources (language-aware keywords & globals)
+  // ---------------------------------------------------------------------------
+
+  var JS_KEYWORDS = [
+    'async', 'await', 'break', 'case', 'catch', 'class', 'const', 'continue',
+    'debugger', 'default', 'delete', 'do', 'else', 'export', 'extends',
+    'finally', 'for', 'from', 'function', 'if', 'import', 'in', 'instanceof',
+    'let', 'new', 'of', 'return', 'static', 'super', 'switch', 'this',
+    'throw', 'try', 'typeof', 'var', 'void', 'while', 'with', 'yield',
+  ];
+  var JS_GLOBALS = [
+    'Array', 'Boolean', 'console', 'Date', 'document', 'Error', 'fetch',
+    'FormData', 'Function', 'globalThis', 'Headers', 'JSON', 'Map', 'Math',
+    'Number', 'Object', 'parseInt', 'parseFloat', 'Promise', 'Proxy',
+    'Reflect', 'RegExp', 'Request', 'Response', 'Set', 'String', 'Symbol',
+    'setTimeout', 'setInterval', 'clearTimeout', 'clearInterval',
+    'URL', 'URLSearchParams', 'WeakMap', 'WeakSet', 'window',
+    'addEventListener', 'removeEventListener', 'querySelector',
+    'querySelectorAll', 'getElementById', 'createElement',
+    'requestAnimationFrame', 'cancelAnimationFrame',
+  ];
+  var JS_SNIPPETS = [
+    { label: 'function', detail: 'function declaration', apply: 'function name(params) {\n  \n}' },
+    { label: 'arrow', detail: '=> arrow function', apply: '(params) => {\n  \n}' },
+    { label: 'forof', detail: 'for...of loop', apply: 'for (const item of iterable) {\n  \n}' },
+    { label: 'forin', detail: 'for...in loop', apply: 'for (const key in object) {\n  \n}' },
+    { label: 'trycatch', detail: 'try/catch block', apply: 'try {\n  \n} catch (err) {\n  \n}' },
+    { label: 'ife', detail: 'if/else', apply: 'if (condition) {\n  \n} else {\n  \n}' },
+    { label: 'clf', detail: 'console.log()', apply: 'console.log()' },
+    { label: 'imp', detail: 'import statement', apply: "import {  } from '';" },
+    { label: 'req', detail: 'require()', apply: "const mod = require('');" },
+    { label: 'asy', detail: 'async function', apply: 'async function name(params) {\n  \n}' },
+    { label: 'prom', detail: 'new Promise', apply: 'new Promise((resolve, reject) => {\n  \n})' },
+  ];
+
+  var PY_KEYWORDS = [
+    'and', 'as', 'assert', 'async', 'await', 'break', 'class', 'continue',
+    'def', 'del', 'elif', 'else', 'except', 'False', 'finally', 'for',
+    'from', 'global', 'if', 'import', 'in', 'is', 'lambda', 'None',
+    'nonlocal', 'not', 'or', 'pass', 'raise', 'return', 'True', 'try',
+    'while', 'with', 'yield',
+  ];
+  var PY_BUILTINS = [
+    'abs', 'all', 'any', 'bin', 'bool', 'breakpoint', 'bytes', 'callable',
+    'chr', 'classmethod', 'compile', 'complex', 'dict', 'dir', 'divmod',
+    'enumerate', 'eval', 'exec', 'filter', 'float', 'format', 'frozenset',
+    'getattr', 'globals', 'hasattr', 'hash', 'help', 'hex', 'id', 'input',
+    'int', 'isinstance', 'issubclass', 'iter', 'len', 'list', 'locals',
+    'map', 'max', 'min', 'next', 'object', 'oct', 'open', 'ord', 'pow',
+    'print', 'property', 'range', 'repr', 'reversed', 'round', 'set',
+    'setattr', 'slice', 'sorted', 'staticmethod', 'str', 'sum', 'super',
+    'tuple', 'type', 'vars', 'zip',
+  ];
+  var PY_SNIPPETS = [
+    { label: 'def', detail: 'function definition', apply: 'def name(self):\n    ' },
+    { label: 'ifmain', detail: 'if __name__ == "__main__"', apply: 'if __name__ == "__main__":\n    ' },
+    { label: 'tryex', detail: 'try/except block', apply: 'try:\n    \nexcept Exception as e:\n    ' },
+    { label: 'with', detail: 'with statement', apply: "with open('file') as f:\n    " },
+    { label: 'cls', detail: 'class definition', apply: 'class Name:\n    def __init__(self):\n        ' },
+    { label: 'lcomp', detail: 'list comprehension', apply: '[x for x in iterable]' },
+    { label: 'dcomp', detail: 'dict comprehension', apply: '{k: v for k, v in iterable}' },
+  ];
+
+  var CSS_PROPS = [
+    'align-items', 'align-content', 'align-self', 'animation', 'background',
+    'background-color', 'background-image', 'border', 'border-radius',
+    'bottom', 'box-shadow', 'box-sizing', 'color', 'cursor', 'display',
+    'flex', 'flex-direction', 'flex-wrap', 'float', 'font-family',
+    'font-size', 'font-weight', 'gap', 'grid', 'grid-template-columns',
+    'grid-template-rows', 'height', 'justify-content', 'left', 'line-height',
+    'margin', 'margin-bottom', 'margin-left', 'margin-right', 'margin-top',
+    'max-height', 'max-width', 'min-height', 'min-width', 'object-fit',
+    'opacity', 'outline', 'overflow', 'overflow-x', 'overflow-y', 'padding',
+    'padding-bottom', 'padding-left', 'padding-right', 'padding-top',
+    'pointer-events', 'position', 'right', 'text-align', 'text-decoration',
+    'text-transform', 'top', 'transform', 'transition', 'visibility',
+    'white-space', 'width', 'word-break', 'z-index',
+  ];
+  var CSS_VALUES = [
+    'absolute', 'auto', 'block', 'bold', 'center', 'column', 'contain',
+    'cover', 'default', 'ease', 'ease-in', 'ease-in-out', 'ease-out',
+    'fixed', 'flex', 'flex-end', 'flex-start', 'grid', 'hidden', 'inherit',
+    'initial', 'inline', 'inline-block', 'inline-flex', 'left', 'none',
+    'normal', 'nowrap', 'pointer', 'relative', 'right', 'row', 'scroll',
+    'space-around', 'space-between', 'space-evenly', 'static', 'sticky',
+    'stretch', 'transparent', 'unset', 'visible', 'wrap',
+  ];
+
+  /**
+   * Build a CM6 completion source for a given language based on file extension.
+   * Returns null if no custom completions are available for the language.
+   */
+  function _buildCompletionSource(fileExt) {
+    var keywords, globals, snippets;
+    switch (fileExt) {
+      case 'js': case 'mjs': case 'cjs': case 'jsx':
+      case 'ts': case 'tsx':
+        keywords = JS_KEYWORDS;
+        globals = JS_GLOBALS;
+        snippets = JS_SNIPPETS;
+        break;
+      case 'py': case 'pyw':
+        keywords = PY_KEYWORDS;
+        globals = PY_BUILTINS;
+        snippets = PY_SNIPPETS;
+        break;
+      case 'css': case 'scss': case 'less': case 'sass':
+        keywords = CSS_PROPS;
+        globals = CSS_VALUES;
+        snippets = [];
+        break;
+      default:
+        return null;
+    }
+
+    // Pre-build the options list once
+    var options = [];
+    for (var i = 0; i < keywords.length; i++) {
+      options.push({ label: keywords[i], type: 'keyword', boost: 1 });
+    }
+    for (var j = 0; j < globals.length; j++) {
+      options.push({ label: globals[j], type: 'variable', boost: 0 });
+    }
+    for (var k = 0; k < snippets.length; k++) {
+      options.push({
+        label: snippets[k].label,
+        detail: snippets[k].detail,
+        apply: snippets[k].apply,
+        type: 'text',
+        boost: 2,
+      });
+    }
+
+    return function (context) {
+      // Get the word before the cursor
+      var word = context.matchBefore(/[\w\-]+/);
+      if (!word) return null;
+      // Don't complete single characters unless explicitly requested
+      if (word.from === word.to && !context.explicit) return null;
+
+      return {
+        from: word.from,
+        options: options,
+        validFor: /^[\w\-]*$/,
+      };
+    };
+  }
+
   // Theme display names for the settings UI
   var THEME_NAMES = {
     oneDark: 'One Dark',
@@ -97,6 +246,9 @@
     this._settingsPanel = null;
     this._contextMenu = null;
     this._initialLoad = true;
+    this._previewEl = null;
+    this._previewBtn = null;
+    this._previewMode = false;
   }
 
   EditorPanel.prototype.isDirty = function () { return this._dirty; };
@@ -183,6 +335,16 @@
     this._langEl = langLabel;
     rightGroup.appendChild(langLabel);
 
+    if (this._isMarkdown()) {
+      var previewBtn = document.createElement('button');
+      previewBtn.className = 'ep-preview-btn';
+      previewBtn.textContent = 'Preview';
+      previewBtn.title = 'Toggle Markdown Preview';
+      previewBtn.addEventListener('click', function () { self._togglePreview(); });
+      this._previewBtn = previewBtn;
+      rightGroup.appendChild(previewBtn);
+    }
+
     var gearBtn = document.createElement('button');
     gearBtn.className = 'ep-settings-btn';
     gearBtn.innerHTML = '&#x2699;';
@@ -201,6 +363,18 @@
     cmContainer.className = 'ep-cm-container';
     wrapper.appendChild(cmContainer);
     this._cmContainer = cmContainer;
+
+    // --- Markdown preview pane (hidden by default) ---
+    if (this._isMarkdown()) {
+      var previewEl = document.createElement('div');
+      previewEl.className = 'ep-md-preview';
+      wrapper.appendChild(previewEl);
+      this._previewEl = previewEl;
+      // Start in preview mode for markdown files
+      this._previewMode = true;
+      this._cmContainer.style.display = 'none';
+      if (this._previewBtn) this._previewBtn.classList.add('active');
+    }
 
     this._initCM();
   };
@@ -287,7 +461,7 @@
         comp.vim.of(settings.get('vimMode') ? cm6.vim() : []),
         comp.autocomplete.of(
           settings.get('autocomplete')
-            ? cm6.autocompletion({ activateOnTyping: true, defaultKeymap: true })
+            ? this._buildAutocompletionExt(cm6)
             : []
         ),
         comp.minimap.of(settings.get('minimap') ? self._createMinimapExt() : []),
@@ -315,6 +489,7 @@
             }
             self._updateStatus('Unsaved');
             self._scheduleAutosave();
+            self._updatePreview();
           }
           self._updateHistoryButtons(update.state);
         }),
@@ -384,7 +559,7 @@
         break;
       case 'autocomplete':
         effects = comp.autocomplete.reconfigure(
-          value ? cm6.autocompletion({ activateOnTyping: true, defaultKeymap: true }) : []
+          value ? self._buildAutocompletionExt(cm6) : []
         );
         break;
       case 'minimap':
@@ -404,6 +579,44 @@
     if (effects) {
       this._cmView.dispatch({ effects: effects });
     }
+  };
+
+  // =========================================================================
+  //  Intelligent autocompletion
+  // =========================================================================
+
+  /**
+   * Build the autocompletion extension array with language-aware sources,
+   * document word completion, and smart configuration.
+   */
+  EditorPanel.prototype._buildAutocompletionExt = function (cm6) {
+    var ext = this._fileExt();
+    var sources = [];
+
+    // Language-specific keyword/global/snippet completions
+    var langSource = _buildCompletionSource(ext);
+    if (langSource) sources.push(langSource);
+
+    // Document word completion as a fallback for all languages
+    if (cm6.completeAnyWord) sources.push(cm6.completeAnyWord);
+
+    // If we have custom sources, use override to combine them.
+    // We still get language completions by not preventing the default sources
+    // from firing — override sources merge with language-provided ones in CM6
+    // only when using the override array; but since language data sources are
+    // separate, we use override only for our custom ones when there are no
+    // language extensions loaded, and languageData.of otherwise.
+    var parts = [];
+
+    parts.push(cm6.autocompletion({
+      activateOnTyping: true,
+      defaultKeymap: true,
+      maxRenderedOptions: 30,
+      icons: true,
+      override: sources.length > 0 ? sources : undefined,
+    }));
+
+    return parts;
   };
 
   // =========================================================================
@@ -963,6 +1176,165 @@
     return dot !== -1 ? name.slice(dot + 1) : '';
   };
 
+  EditorPanel.prototype._isMarkdown = function () {
+    var ext = this._fileExt();
+    return ext === 'md' || ext === 'markdown';
+  };
+
+  EditorPanel.prototype._togglePreview = function () {
+    this._previewMode = !this._previewMode;
+    if (this._previewMode) {
+      this._cmContainer.style.display = 'none';
+      if (this._previewEl) {
+        this._previewEl.style.display = '';
+        this._updatePreview();
+      }
+      if (this._previewBtn) this._previewBtn.classList.add('active');
+    } else {
+      this._cmContainer.style.display = '';
+      if (this._previewEl) this._previewEl.style.display = 'none';
+      if (this._previewBtn) this._previewBtn.classList.remove('active');
+      if (this._cmView) this._cmView.focus();
+    }
+  };
+
+  EditorPanel.prototype._updatePreview = function () {
+    if (!this._previewMode || !this._previewEl || !this._cmView) return;
+    var md = this._cmView.state.doc.toString();
+    this._previewEl.innerHTML = this._renderMarkdown(md);
+  };
+
+  EditorPanel.prototype._renderMarkdown = function (md) {
+    function esc(s) {
+      return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+    function safeHref(href) {
+      return /^javascript:/i.test(href.trim()) ? '#' : href;
+    }
+    function inline(s) {
+      // Split on inline code to preserve it
+      var result = '';
+      var codeRe = /`([^`\n]+)`/g;
+      var last = 0;
+      var m;
+      while ((m = codeRe.exec(s)) !== null) {
+        result += applyInline(s.slice(last, m.index));
+        result += '<code>' + esc(m[1]) + '</code>';
+        last = m.index + m[0].length;
+      }
+      result += applyInline(s.slice(last));
+      return result;
+    }
+    function applyInline(s) {
+      // Bold+italic
+      s = s.replace(/\*\*\*([^*\n]+)\*\*\*/g, '<strong><em>$1</em></strong>');
+      s = s.replace(/___([^_\n]+)___/g, '<strong><em>$1</em></strong>');
+      // Bold
+      s = s.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+      s = s.replace(/__([^_\n]+)__/g, '<strong>$1</strong>');
+      // Italic
+      s = s.replace(/\*([^*\n]+)\*/g, '<em>$1</em>');
+      s = s.replace(/_([^_\n]+)_/g, '<em>$1</em>');
+      // Images before links
+      s = s.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, function (_, alt, src) {
+        return '<img alt="' + esc(alt) + '" src="' + esc(src) + '" style="max-width:100%">';
+      });
+      // Links
+      s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, function (_, text, href) {
+        return '<a href="' + esc(safeHref(href)) + '" target="_blank" rel="noopener">' + text + '</a>';
+      });
+      return s;
+    }
+
+    var lines = md.split('\n');
+    var out = [];
+    var i = 0;
+
+    while (i < lines.length) {
+      var line = lines[i];
+
+      // Blank line
+      if (line.trim() === '') { i++; continue; }
+
+      // Fenced code block
+      var fenceM = line.match(/^(`{3,}|~{3,})(\w*)$/);
+      if (fenceM) {
+        var fence = fenceM[1];
+        var lang = fenceM[2];
+        var codeLines = [];
+        i++;
+        while (i < lines.length && !lines[i].startsWith(fence)) {
+          codeLines.push(esc(lines[i]));
+          i++;
+        }
+        i++; // closing fence
+        out.push('<pre><code' + (lang ? ' class="language-' + esc(lang) + '"' : '') + '>' + codeLines.join('\n') + '</code></pre>');
+        continue;
+      }
+
+      // ATX heading
+      var hM = line.match(/^(#{1,6})\s+(.*)/);
+      if (hM) {
+        var lvl = hM[1].length;
+        out.push('<h' + lvl + '>' + inline(hM[2]) + '</h' + lvl + '>');
+        i++; continue;
+      }
+
+      // Horizontal rule
+      if (line.match(/^\s*([-*_])\s*\1\s*\1[\s\1]*$/)) {
+        out.push('<hr>'); i++; continue;
+      }
+
+      // Blockquote
+      if (line.match(/^>\s?/)) {
+        var qLines = [];
+        while (i < lines.length && lines[i].match(/^>\s?/)) {
+          qLines.push(lines[i].replace(/^>\s?/, ''));
+          i++;
+        }
+        out.push('<blockquote>' + qLines.map(inline).join('<br>') + '</blockquote>');
+        continue;
+      }
+
+      // Unordered list
+      if (line.match(/^[\s]*[-*+]\s+/)) {
+        var ulItems = [];
+        while (i < lines.length && lines[i].match(/^[\s]*[-*+]\s+/)) {
+          ulItems.push('<li>' + inline(lines[i].replace(/^[\s]*[-*+]\s+/, '')) + '</li>');
+          i++;
+        }
+        out.push('<ul>' + ulItems.join('') + '</ul>');
+        continue;
+      }
+
+      // Ordered list
+      if (line.match(/^[\s]*\d+\.\s+/)) {
+        var olItems = [];
+        while (i < lines.length && lines[i].match(/^[\s]*\d+\.\s+/)) {
+          olItems.push('<li>' + inline(lines[i].replace(/^[\s]*\d+\.\s+/, '')) + '</li>');
+          i++;
+        }
+        out.push('<ol>' + olItems.join('') + '</ol>');
+        continue;
+      }
+
+      // Paragraph: collect until blank line or block element
+      var pLines = [];
+      while (i < lines.length) {
+        var pl = lines[i];
+        if (pl.trim() === '') break;
+        if (pl.match(/^#{1,6}\s/) || pl.match(/^(`{3,}|~{3,})/) || pl.match(/^>\s?/) ||
+            pl.match(/^[\s]*[-*+]\s+/) || pl.match(/^[\s]*\d+\.\s+/) ||
+            pl.match(/^\s*([-*_])\s*\1\s*\1[\s\1]*$/)) break;
+        pLines.push(pl);
+        i++;
+      }
+      if (pLines.length) out.push('<p>' + pLines.map(inline).join('<br>') + '</p>');
+    }
+
+    return out.join('\n');
+  };
+
   EditorPanel.prototype._getLanguageName = function () {
     var names = {
       js: 'JavaScript', mjs: 'JavaScript', cjs: 'JavaScript',
@@ -1003,6 +1375,7 @@
         self._initialLoad = false;
         self._updateStatus('Saved');
         if (self._onDirtyChange) self._onDirtyChange(false);
+        self._updatePreview();
       })
       .catch(function (err) {
         console.error('[editor-panel] load failed:', err);

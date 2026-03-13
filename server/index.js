@@ -1,11 +1,12 @@
 const http = require('http');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { ConfigManager } = require('./config');
-const { SessionManager } = require('./sessions');
+const { SessionManager, DEFAULT_INSTANCE } = require('./sessions');
 const { FolderManager } = require('./folders');
 const { TerminalWSServer } = require('./websocket');
-const { listDirectory } = require('./filetree');
+const { listDirectory, listClaudeDirectory, listOpencodeDirectory, OPENCODE_ROOT } = require('./filetree');
 const { getHistoryFilePath, createHistoryRoute } = require('./history');
 const { FileManager } = require('./files');
 const { createFileOps } = require('./fileops');
@@ -45,9 +46,9 @@ function setSecurityHeaders(res) {
 }
 
 function serveStatic(req, res) {
-  let filePath = req.url === '/' ? '/index.html' : req.url;
-  // Strip query strings
-  filePath = filePath.split('?')[0];
+  // Strip query strings first so /?instance=... resolves to /index.html
+  let filePath = req.url.split('?')[0];
+  if (filePath === '/') filePath = '/index.html';
   // Prevent directory traversal
   const safePath = path.normalize(filePath).replace(/^(\.\.(\/|\\|$))+/, '');
   const fullPath = path.join(CLIENT_DIR, safePath);
@@ -75,6 +76,65 @@ function serveStatic(req, res) {
   });
 }
 
+function _connectListdeckSSE(ldBase, wsServer) {
+  let reconnectDelay = 2000;
+  const DAILY_TASK_EVENTS = new Set([
+    'daily_task_created', 'daily_task_updated', 'daily_task_deleted', 'daily_tasks_cleared'
+  ]);
+
+  function connect() {
+    let sseUrl;
+    try {
+      sseUrl = new URL('/api/v1/events', ldBase);
+    } catch {
+      return;
+    }
+    const httpMod = sseUrl.protocol === 'https:' ? require('https') : require('http');
+
+    const req = httpMod.get(sseUrl.toString(), (res) => {
+      if (res.statusCode !== 200) {
+        res.resume();
+        schedule();
+        return;
+      }
+      reconnectDelay = 2000;
+      let buf = '';
+      let lastEvent = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => {
+        buf += chunk;
+        const lines = buf.split('\n');
+        buf = lines.pop();
+        for (const line of lines) {
+          if (line.startsWith('event: ')) {
+            lastEvent = line.slice(7).trim();
+          } else if (line.startsWith('data: ')) {
+            if (DAILY_TASK_EVENTS.has(lastEvent)) {
+              try {
+                const data = JSON.parse(line.slice(6));
+                if (data.date) wsServer.broadcastTasksUpdate(data.date);
+              } catch {}
+            }
+          } else if (line === '') {
+            lastEvent = '';
+          }
+        }
+      });
+      res.on('end', schedule);
+      res.on('error', schedule);
+    });
+    req.on('error', schedule);
+    req.setTimeout(0);
+  }
+
+  function schedule() {
+    setTimeout(connect, reconnectDelay);
+    reconnectDelay = Math.min(reconnectDelay * 2, 30000);
+  }
+
+  connect();
+}
+
 async function createApp(options = {}) {
   const { randomBytes } = require('crypto');
   const serverToken = randomBytes(32).toString('hex');
@@ -85,9 +145,10 @@ async function createApp(options = {}) {
   const configManager = new ConfigManager(configPath);
   const config = configManager.load();
 
-  // Allow overriding tmux socket/prefix (used by tests for isolation)
+  // Allow overriding tmux socket/prefix/instancesPath (used by tests for isolation)
   if (options.tmuxSocket) config.tmuxSocket = options.tmuxSocket;
   if (options.sessionPrefix) config.sessionPrefix = options.sessionPrefix;
+  if (options.instancesPath) config.instancesPath = options.instancesPath;
 
   const historyFilePath = getHistoryFilePath(config.settings.shell);
   const historyRoute = createHistoryRoute(historyFilePath);
@@ -95,9 +156,25 @@ async function createApp(options = {}) {
   const sessionManager = new SessionManager(config);
   await sessionManager.discoverSessions();
 
-  const foldersPath = options.foldersPath || path.join(__dirname, '..', 'config', 'folders.json');
-  const folderManager = new FolderManager(foldersPath);
-  folderManager.load();
+  // Per-instance folder managers, lazy-created on first access
+  const folderManagers = new Map();
+  const defaultFoldersPath = options.foldersPath || path.join(__dirname, '..', 'config', 'folders.json');
+
+  function getFolderManager(instanceId) {
+    const id = instanceId || DEFAULT_INSTANCE;
+    if (!folderManagers.has(id)) {
+      const foldersPath = id === DEFAULT_INSTANCE
+        ? defaultFoldersPath
+        : path.join(__dirname, '..', 'config', `folders-${id}.json`);
+      const fm = new FolderManager(foldersPath);
+      fm.load();
+      folderManagers.set(id, fm);
+    }
+    return folderManagers.get(id);
+  }
+
+  // Pre-load the default instance folder manager
+  getFolderManager(DEFAULT_INSTANCE);
 
   const fileManager = new FileManager(configManager);
 
@@ -108,23 +185,28 @@ async function createApp(options = {}) {
     if (req.url === '/api/config' && req.method === 'GET') {
       setSecurityHeaders(res);
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ...configManager.getConfig(), serverToken }));
+      res.end(JSON.stringify({ ...configManager.getConfig(), serverToken, claudeRoot: path.join(os.homedir(), '.claude'), opencodeRoot: OPENCODE_ROOT }));
       return;
     }
 
-    if (req.url === '/api/folders' && req.method === 'GET') {
+    if (req.url.startsWith('/api/folders') && req.method === 'GET') {
+      const foldersUrl = new URL(req.url, 'http://localhost');
+      const instanceId = foldersUrl.searchParams.get('instance') || DEFAULT_INSTANCE;
+      const fm = getFolderManager(instanceId);
       setSecurityHeaders(res);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
-        folders: folderManager.getFolders(),
-        sessionFolders: folderManager.getSessionFolders()
+        folders: fm.getFolders(),
+        sessionFolders: fm.getSessionFolders()
       }));
       return;
     }
 
-    if (req.url === '/api/sessions' && req.method === 'GET') {
+    if (req.url.startsWith('/api/sessions') && req.method === 'GET') {
+      const sessionsUrl = new URL(req.url, 'http://localhost');
+      const instanceId = sessionsUrl.searchParams.get('instance') || DEFAULT_INSTANCE;
       (async () => {
-        const sessions = await sessionManager.listSessions();
+        const sessions = await sessionManager.listSessions(instanceId);
         setSecurityHeaders(res);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(sessions));
@@ -153,6 +235,52 @@ async function createApp(options = {}) {
       const dirPath = url.searchParams.get('path') || '.';
       (async () => {
         const entries = await listDirectory(dirPath);
+        setSecurityHeaders(res);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(entries));
+      })().catch((err) => {
+        if (!res.headersSent) {
+          setSecurityHeaders(res);
+          if (err.code === 'TRAVERSAL') {
+            res.writeHead(403, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Forbidden' }));
+          } else {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: err.message }));
+          }
+        }
+      });
+      return;
+    }
+
+    if (req.method === 'GET' && req.url.startsWith('/api/claude-files')) {
+      const url = new URL(req.url, 'http://localhost');
+      const dirPath = url.searchParams.get('path') || '.';
+      (async () => {
+        const entries = await listClaudeDirectory(dirPath);
+        setSecurityHeaders(res);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(entries));
+      })().catch((err) => {
+        if (!res.headersSent) {
+          setSecurityHeaders(res);
+          if (err.code === 'TRAVERSAL') {
+            res.writeHead(403, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Forbidden' }));
+          } else {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: err.message }));
+          }
+        }
+      });
+      return;
+    }
+
+    if (req.method === 'GET' && req.url.startsWith('/api/opencode-files')) {
+      const url = new URL(req.url, 'http://localhost');
+      const dirPath = url.searchParams.get('path') || '.';
+      (async () => {
+        const entries = await listOpencodeDirectory(dirPath);
         setSecurityHeaders(res);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(entries));
@@ -478,10 +606,19 @@ async function createApp(options = {}) {
     serveStatic(req, res);
   });
 
-  const wsServer = new TerminalWSServer(server, sessionManager, { serverToken, configManager, folderManager });
+  const wsServer = new TerminalWSServer(server, sessionManager, { serverToken, configManager, getFolderManager });
   wsServer.startActivityBroadcasting();
 
-  sessionManager.on('sessionDied', () => { wsServer._broadcastSessions(); });
+  // Connect to Listdeck SSE stream and relay daily task events to control clients
+  const ldConfig = configManager.getConfig().listdeck || {};
+  const ldBase = (ldConfig.url || '').replace(/\/$/, '');
+  if (ldBase) {
+    _connectListdeckSSE(ldBase, wsServer);
+  }
+
+  sessionManager.on('sessionDied', (sessionId, sessionName, instanceId) => {
+    wsServer._broadcastSessions(instanceId || DEFAULT_INSTANCE);
+  });
   sessionManager.startHealthCheck();
 
   // Watch history file for changes and push updates to clients

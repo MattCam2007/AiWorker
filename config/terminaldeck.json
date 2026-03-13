@@ -59,6 +59,41 @@
   },
   "openFiles": [
     {
+      "id": "agents",
+      "name": "AGENTS.md",
+      "file": "/workspace/sailship/AGENTS.md"
+    },
+    {
+      "id": "astronomy-engine-feature-spec",
+      "name": "ASTRONOMY_ENGINE_FEATURE_SPEC.md",
+      "file": "/workspace/sailship/ASTRONOMY_ENGINE_FEATURE_SPEC.md"
+    },
+    {
+      "id": "emergency-fix-summary",
+      "name": "EMERGENCY_FIX_SUMMARY.md",
+      "file": "/workspace/sailship/EMERGENCY_FIX_SUMMARY.md"
+    },
+    {
+      "id": "docker-compose",
+      "name": "docker-compose.yml",
+      "file": "/workspace/sailship/docker-compose.yml"
+    },
+    {
+      "id": "integration-guide",
+      "name": "integration-guide.md",
+      "file": "/workspace/listdeck/docs/integration-guide.md"
+    },
+    {
+      "id": "uuid-session-identifiers-summary",
+      "name": "uuid-session-identifiers-summary.md",
+      "file": "/workspace/AiWorker/plans/uuid-session-identifiers-summary.md"
+    },
+    {
+      "id": "multi-session-investigation",
+      "name": "multi-session-investigation.md",
+      "file": "/workspace/AiWorker/plans/multi-session-investigation.md"
+    },
+    {
       "id": "app",
       "name": "app.py",
       "file": "/workspace/listdeck/app.py"

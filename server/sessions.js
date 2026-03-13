@@ -1,6 +1,7 @@
 const { execFile } = require('child_process');
 const { EventEmitter } = require('events');
 const fs = require('fs');
+const path = require('path');
 const util = require('util');
 const { randomUUID } = require('crypto');
 const os = require('os');
@@ -14,7 +15,11 @@ const DIAG_GREP_TIMEOUT_MS = 30000;
 
 const SESSION_PREFIX = 'terminaldeck-';
 const TMUX_SOCKET = 'terminaldeck'; // Dedicated socket to isolate from processes inside terminals
+const WORKSPACE_ROOT = '/workspace';
+const CLAUDE_ROOT = path.join(os.homedir(), '.claude');
 const HEALTH_CHECK_INTERVAL = 10000; // 10s
+const DEFAULT_INSTANCE = 'default';
+const INSTANCES_FILE = path.join(__dirname, '..', 'config', 'instances.json');
 
 function isValidColor(val) {
   return val === null || val === 'inherit' || /^#[0-9a-fA-F]{6}$/.test(val);
@@ -35,10 +40,60 @@ class SessionManager extends EventEmitter {
     this._sessionPrefix = config.sessionPrefix || SESSION_PREFIX;
     this._tmuxSocket = config.tmuxSocket || TMUX_SOCKET;
     this._sessions = new Map(); // id -> { id, name, command, workingDir, shellPid, createdAt }
+    this._instances = new Map(); // instanceId -> Set<sessionId>
+    this._instancesPath = config.instancesPath || INSTANCES_FILE;
     this._healthInterval = null;
     this._lastHealthSnapshot = null;
     this._serverDownLogged = false;
     this._serverStarted = false;
+  }
+
+  _loadInstances() {
+    try {
+      const raw = fs.readFileSync(this._instancesPath, 'utf-8');
+      const data = JSON.parse(raw);
+      for (const [instanceId, info] of Object.entries(data)) {
+        this._instances.set(instanceId, new Set(info.sessions || []));
+      }
+    } catch {
+      // File doesn't exist yet — fine
+    }
+  }
+
+  _saveInstances() {
+    const data = {};
+    for (const [instanceId, sessionIds] of this._instances) {
+      data[instanceId] = { sessions: [...sessionIds], updatedAt: new Date().toISOString() };
+    }
+    try {
+      fs.writeFileSync(this._instancesPath, JSON.stringify(data, null, 2), 'utf-8');
+    } catch (err) {
+      log.debug(`[instances] failed to save: ${err.message}`);
+    }
+  }
+
+  _addToInstance(instanceId, sessionId) {
+    if (!this._instances.has(instanceId)) {
+      this._instances.set(instanceId, new Set());
+    }
+    this._instances.get(instanceId).add(sessionId);
+    this._saveInstances();
+  }
+
+  _removeFromInstance(instanceId, sessionId) {
+    const set = this._instances.get(instanceId);
+    if (set) {
+      set.delete(sessionId);
+      if (set.size === 0) this._instances.delete(instanceId);
+      this._saveInstances();
+    }
+  }
+
+  getInstanceForSession(sessionId) {
+    for (const [instanceId, sessionIds] of this._instances) {
+      if (sessionIds.has(sessionId)) return instanceId;
+    }
+    return null;
   }
 
   // Start tmux server on our dedicated socket (verbose logging when DEBUG=1)
@@ -90,6 +145,17 @@ class SessionManager extends EventEmitter {
   }
 
   async discoverSessions() {
+    // Load persisted instance→session mapping first
+    this._loadInstances();
+
+    // Build reverse map: sessionId -> instanceId
+    const sessionToInstance = new Map();
+    for (const [instanceId, sessionIds] of this._instances) {
+      for (const sessionId of sessionIds) {
+        sessionToInstance.set(sessionId, instanceId);
+      }
+    }
+
     let tmuxSessions;
     try {
       const { stdout } = await execFileAsync('tmux', ['-L', this._tmuxSocket, 'list-sessions', '-F', '#{session_name}']);
@@ -117,11 +183,14 @@ class SessionManager extends EventEmitter {
           shellPid,
           createdAt: Date.now()
         });
+        // Assign to known instance or default (orphaned sessions from before this feature)
+        const instanceId = sessionToInstance.get(id) || DEFAULT_INSTANCE;
+        this._addToInstance(instanceId, id);
       }
     }
   }
 
-  async createTerminal(name, command, headerBg, headerColor) {
+  async createTerminal(instanceId, name, command, headerBg, headerColor, cwd) {
     if (name && (typeof name !== 'string' || name.length > 100)) {
       throw new Error('Terminal name must be a string of 100 characters or fewer');
     }
@@ -136,13 +205,23 @@ class SessionManager extends EventEmitter {
     const validColor = isValidColor(headerColor) ? headerColor : null;
     const tmuxName = this._tmuxSessionName(id);
 
-    log.log(`[tmux] creating session ${tmuxName.slice(-8)} cmd="${shell}"`);
+    let workingDir = WORKSPACE_ROOT;
+    if (cwd && typeof cwd === 'string' && !/[\n\r\0]/.test(cwd)) {
+      // Support both relative-to-workspace paths and absolute paths (e.g. ~/.claude dirs)
+      const resolved = path.isAbsolute(cwd) ? path.resolve(cwd) : path.resolve(WORKSPACE_ROOT, cwd);
+      if (resolved.startsWith(WORKSPACE_ROOT + path.sep) || resolved === WORKSPACE_ROOT
+          || resolved.startsWith(CLAUDE_ROOT + path.sep) || resolved === CLAUDE_ROOT) {
+        workingDir = resolved;
+      }
+    }
+
+    log.log(`[tmux] creating session ${tmuxName.slice(-8)} cmd="${shell}" cwd="${workingDir}"`);
     await this._ensureServer();
     // Unset TMUX/TMUX_PANE so processes inside can't discover our tmux.
     // Combined with the dedicated socket (-L terminaldeck), processes inside
     // won't find our sessions even if they run `tmux list-sessions`.
     const sessionCmd = `unset TMUX TMUX_PANE; exec ${shell}`;
-    await execFileAsync('tmux', ['-L', this._tmuxSocket, 'new-session', '-d', '-s', tmuxName, '-c', '/workspace', sessionCmd]);
+    await execFileAsync('tmux', ['-L', this._tmuxSocket, 'new-session', '-d', '-s', tmuxName, '-c', workingDir, sessionCmd]);
 
     // Explicitly set remain-on-exit as a WINDOW option on this session's window.
     // The global setw -g in tmux.conf may not propagate correctly in all cases.
@@ -177,14 +256,26 @@ class SessionManager extends EventEmitter {
       id,
       name: name || id,
       command: shell,
-      workingDir: '/workspace',
+      workingDir: workingDir,
       headerBg: validBg,
       headerColor: validColor,
       shellPid,
       createdAt: Date.now()
     });
 
+    this._addToInstance(instanceId || DEFAULT_INSTANCE, id);
     return { id, name: name || id };
+  }
+
+  async sendKeys(id, command) {
+    const tmuxName = this._tmuxSessionName(id);
+    if (!(await this._tmuxSessionExists(id))) {
+      throw new Error(`No tmux session found for terminal: ${id}`);
+    }
+    // Small delay to let the shell initialize before sending keys
+    await new Promise(resolve => setTimeout(resolve, 300));
+    await execFileAsync('tmux', ['-L', this._tmuxSocket, 'send-keys', '-t', tmuxName, command, 'Enter']);
+    log.log(`[tmux] sent startCommand to ${tmuxName.slice(-8)}`);
   }
 
   async attachSession(id) {
@@ -231,12 +322,13 @@ class SessionManager extends EventEmitter {
     return true;
   }
 
-  async destroySession(id) {
+  async destroySession(instanceId, id) {
     const tmuxName = this._tmuxSessionName(id);
     try {
       await execFileAsync('tmux', ['-L', this._tmuxSocket, 'kill-session', '-t', tmuxName]);
     } catch {}
     this._sessions.delete(id);
+    this._removeFromInstance(instanceId || DEFAULT_INSTANCE, id);
   }
 
   // --- Health monitoring ---
@@ -286,8 +378,10 @@ class SessionManager extends EventEmitter {
         const uptime = session.createdAt ? Math.round((Date.now() - session.createdAt) / 1000) : '?';
         log.error(`[tmux] session vanished: ${session.name} (${id.slice(0, 8)}) uptime=${uptime}s pid=${session.shellPid || '?'}`);
         await this._dumpDiagnostics({ sessionId: id, sessionName: session.name, shellPid: session.shellPid, reason: 'health-check-vanished' });
+        const instanceId = this.getInstanceForSession(id);
         this._sessions.delete(id); // Remove so we don't log repeatedly
-        this.emit('sessionDied', id, session.name);
+        if (instanceId) this._removeFromInstance(instanceId, id);
+        this.emit('sessionDied', id, session.name, instanceId);
       }
     }
   }
@@ -454,7 +548,9 @@ class SessionManager extends EventEmitter {
     return result;
   }
 
-  async listSessions() {
+  async listSessions(instanceId) {
+    const instanceSessionIds = this._instances.get(instanceId || DEFAULT_INSTANCE) || new Set();
+
     let activeTmuxSessions;
     try {
       const { stdout } = await execFileAsync('tmux', ['-L', this._tmuxSocket, 'list-sessions', '-F', '#{session_name}']);
@@ -464,7 +560,9 @@ class SessionManager extends EventEmitter {
     }
 
     const result = [];
-    for (const [id, session] of this._sessions) {
+    for (const id of instanceSessionIds) {
+      const session = this._sessions.get(id);
+      if (!session) continue;
       result.push({
         id,
         name: session.name,
@@ -477,4 +575,4 @@ class SessionManager extends EventEmitter {
   }
 }
 
-module.exports = { SessionManager };
+module.exports = { SessionManager, DEFAULT_INSTANCE };

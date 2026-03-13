@@ -1,0 +1,18 @@
+{
+  "settings": {
+    "theme": {
+      "defaultColor": "#33ff33",
+      "background": "#0a0a0a",
+      "fontFamily": "Fira Code, monospace",
+      "fontSize": 14
+    },
+    "shell": "/bin/bash"
+  },
+  "notes": [
+    {
+      "id": "scratch",
+      "name": "Scratchpad",
+      "file": "scratch.md"
+    }
+  ]
+}

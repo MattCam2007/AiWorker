@@ -46,13 +46,11 @@ describe('App', function () {
     global.document = window.document;
     global.WebSocket = MockWebSocket;
 
-    // fetch returns config on first call, sessions on second
-    var callCount = 0;
     global.fetch = sinon.stub().callsFake(function (url) {
-      if (url === '/api/config') {
+      if (url === '/api/config' || url.startsWith('/api/config?')) {
         return Promise.resolve({ json: () => Promise.resolve(testConfig) });
       }
-      if (url === '/api/sessions') {
+      if (url.startsWith('/api/sessions')) {
         return Promise.resolve({ json: () => Promise.resolve(testSessions) });
       }
       return Promise.resolve({ json: () => Promise.resolve({}) });
@@ -107,12 +105,22 @@ describe('App', function () {
       this.assignTerminal = sinon.stub().callsFake(function (cell, id, conn) {
         this._cellMap.set(cell, { connection: conn, terminalId: id });
       });
-      this._addToMinimized = sinon.stub();
-      this._removeFromMinimized = sinon.stub();
+      this.assignFolder = sinon.stub().callsFake(function (cell, fc) {
+        this._cellMap.set(cell, { connection: fc.getActiveConnection(), terminalId: fc.getActiveTerminalId(), folderCell: fc });
+        // Remove from minimized
+        var self = this;
+        fc.getTerminals().forEach(function (t) { self._minimized.delete(t.id); });
+      });
+      this._switchFolderTab = sinon.stub();
+      this._makeFolderCallbacks = sinon.stub().returns({});
+      this._addToMinimized = sinon.stub().callsFake(function (id, conn) { this._minimized.set(id, conn); });
+      this._removeFromMinimized = sinon.stub().callsFake(function (id) { this._minimized.delete(id); });
+      this._clearCell = sinon.stub();
       this._removeFromGrid = sinon.stub();
       this.updateHeader = sinon.stub();
       this.clearSupersize = sinon.stub();
       this.checkMobile = sinon.stub().returns(false);
+      this._folders = [];
       this._createColorSwatches = function (activeColor, onSelect) {
         var container = document.createElement('div');
         container.className = 'edit-swatches';
@@ -132,6 +140,52 @@ describe('App', function () {
       '3x1': { cols: 3, rows: 1 },
       '1x3': { cols: 1, rows: 3 }
     };
+
+    // Stub FolderCell
+    window.TerminalDeck.FolderCell = function (folderId, folderName, entries) {
+      this._folderId = folderId;
+      this._folderName = folderName;
+      this._terminals = (entries || []).slice();
+      this._activeId = this._terminals.length > 0 ? this._terminals[0].id : null;
+    };
+    window.TerminalDeck.FolderCell.prototype.getFolderId = function () { return this._folderId; };
+    window.TerminalDeck.FolderCell.prototype.getFolderName = function () { return this._folderName; };
+    window.TerminalDeck.FolderCell.prototype.getActiveTerminalId = function () { return this._activeId; };
+    window.TerminalDeck.FolderCell.prototype.getActiveConnection = function () {
+      for (var i = 0; i < this._terminals.length; i++) {
+        if (this._terminals[i].id === this._activeId) return this._terminals[i].connection;
+      }
+      return null;
+    };
+    window.TerminalDeck.FolderCell.prototype.getTerminals = function () { return this._terminals.slice(); };
+    window.TerminalDeck.FolderCell.prototype.setActiveTab = function (id) {
+      if (id === this._activeId) return null;
+      var prev = { id: this._activeId, conn: this.getActiveConnection() };
+      this._activeId = id;
+      return { prev: prev, next: { id: id, conn: this.getActiveConnection() } };
+    };
+    window.TerminalDeck.FolderCell.prototype.addTerminal = function (id, name, conn) {
+      this._terminals.push({ id: id, name: name, connection: conn });
+      if (!this._activeId) this._activeId = id;
+    };
+    window.TerminalDeck.FolderCell.prototype.removeTerminal = function (id) {
+      var wasActive = id === this._activeId;
+      var idx = this._terminals.findIndex(function (t) { return t.id === id; });
+      if (idx === -1) return { wasActive: false, newActiveId: this._activeId };
+      this._terminals.splice(idx, 1);
+      var newActiveId = this._activeId;
+      if (wasActive) {
+        newActiveId = this._terminals.length > 0 ? this._terminals[Math.min(idx, this._terminals.length - 1)].id : null;
+        this._activeId = newActiveId;
+      }
+      return { wasActive: wasActive, newActiveId: newActiveId };
+    };
+    window.TerminalDeck.FolderCell.prototype.updateTerminalName = function (id, name) {
+      var t = this._terminals.find(function (t) { return t.id === id; });
+      if (t) t.name = name;
+    };
+    window.TerminalDeck.FolderCell.prototype.renderHeader = sinon.stub();
+    window.TerminalDeck.FolderCell.prototype.updateActiveTab = sinon.stub();
 
     delete require.cache[require.resolve('./app')];
     require('./app');
@@ -160,8 +214,9 @@ describe('App', function () {
   it('init() fetches /api/config and /api/sessions', function () {
     var app = new App();
     return app.init().then(function () {
-      expect(global.fetch.calledWith('/api/config')).to.be.true;
-      expect(global.fetch.calledWith('/api/sessions')).to.be.true;
+      var urls = global.fetch.args.map(function (a) { return a[0]; });
+      expect(urls.some(function (u) { return u === '/api/config'; })).to.be.true;
+      expect(urls.some(function (u) { return u.startsWith('/api/sessions'); })).to.be.true;
     });
   });
 
@@ -182,11 +237,12 @@ describe('App', function () {
     });
   });
 
-  it('init() connects control WebSocket to /ws/control', function () {
+  it('init() connects control WebSocket to /ws/control with instance param', function () {
     var app = new App();
     return app.init().then(function () {
       expect(app._controlWs).to.exist;
-      expect(app._controlWs.url).to.equal('ws://localhost:3000/ws/control?t=');
+      expect(app._controlWs.url).to.include('/ws/control');
+      expect(app._controlWs.url).to.include('instance=');
     });
   });
 
@@ -549,10 +605,10 @@ describe('App', function () {
   it('shows empty state when no sessions exist', function () {
     // Override fetch to return empty sessions
     global.fetch = sinon.stub().callsFake(function (url) {
-      if (url === '/api/config') {
+      if (url === '/api/config' || url.startsWith('/api/config?')) {
         return Promise.resolve({ json: () => Promise.resolve(testConfig) });
       }
-      if (url === '/api/sessions') {
+      if (url.startsWith('/api/sessions')) {
         return Promise.resolve({ json: () => Promise.resolve([]) });
       }
       return Promise.resolve({ json: () => Promise.resolve({}) });
@@ -565,5 +621,291 @@ describe('App', function () {
       expect(emptyState).to.exist;
       expect(emptyState.textContent).to.include('No panels');
     });
+  });
+
+  // --- Unit 5: Folder Cell App Integration ---
+
+  function makeConn(window, id, name) {
+    return {
+      id: id,
+      type: 'terminal',
+      config: { name: name || id },
+      attach: sinon.stub(),
+      detach: sinon.stub(),
+      refit: sinon.stub(),
+      focus: sinon.stub(),
+      isActive: sinon.stub().returns(false),
+      destroy: sinon.stub()
+    };
+  }
+
+  it('_openFolderInCell creates FolderCell with correct terminals', function () {
+    var app = new App();
+    return app.init().then(function () {
+      // Set up connections and sessionFolders
+      var connA = makeConn(window, 'a', 'A');
+      var connB = makeConn(window, 'b', 'B');
+      app._connections['a'] = connA;
+      app._connections['b'] = connB;
+      app._sessionFolders = { a: 'f1', b: 'f1' };
+      app._folders = [{ id: 'f1', name: 'Folder 1' }];
+
+      var cell = app._engine._cells[0];
+      app._openFolderInCell('f1', cell);
+
+      expect(app._engine.assignFolder.calledOnce).to.be.true;
+      var fc = app._engine.assignFolder.firstCall.args[1];
+      expect(fc.getFolderId()).to.equal('f1');
+      var ids = fc.getTerminals().map(function (t) { return t.id; });
+      expect(ids).to.include('a');
+      expect(ids).to.include('b');
+    });
+  });
+
+  it('_openFolderInCell is no-op for empty folder', function () {
+    var app = new App();
+    return app.init().then(function () {
+      app._connections = {};
+      app._sessionFolders = {};
+      app._folders = [{ id: 'f1', name: 'Empty' }];
+
+      var cell = app._engine._cells[0];
+      app._openFolderInCell('f1', cell);
+
+      expect(app._engine.assignFolder.called).to.be.false;
+    });
+  });
+
+  it('_openFolderInCell stores folderCell in _folderCells map', function () {
+    var app = new App();
+    return app.init().then(function () {
+      var connA = makeConn(window, 'a', 'A');
+      app._connections['a'] = connA;
+      app._sessionFolders = { a: 'f1' };
+      app._folders = [{ id: 'f1', name: 'Folder 1' }];
+
+      var cell = app._engine._cells[0];
+      app._openFolderInCell('f1', cell);
+
+      expect(app._folderCells['f1']).to.exist;
+    });
+  });
+
+  it('_syncTerminalList shows "Cell N (tab)" for inactive folder tabs', function () {
+    var app = new App();
+    return app.init().then(function () {
+      var connA = makeConn(window, 'a', 'A');
+      var connB = makeConn(window, 'b', 'B');
+      app._connections['a'] = connA;
+      app._connections['b'] = connB;
+
+      // Set up a folder cell in cell 0 with 'a' active, 'b' inactive
+      var fc = new window.TerminalDeck.FolderCell('f1', 'Folder', [
+        { id: 'a', name: 'A', connection: connA },
+        { id: 'b', name: 'B', connection: connB }
+      ]);
+      app._engine._cellMap.set(app._engine._cells[0], {
+        connection: connA, terminalId: 'a', folderCell: fc
+      });
+
+      // Mock terminal list render
+      var rendered = null;
+      if (app._terminalList) {
+        app._terminalList.render = function (items) { rendered = items; };
+      }
+
+      app._syncTerminalList();
+
+      if (rendered) {
+        var bItem = rendered.find(function (i) { return i.id === 'b'; });
+        expect(bItem).to.exist;
+        expect(bItem.location).to.include('tab');
+      }
+    });
+  });
+
+  it('_handleTerminalListSelect switches to inactive folder tab', function () {
+    var app = new App();
+    return app.init().then(function () {
+      var connA = makeConn(window, 'a', 'A');
+      var connB = makeConn(window, 'b', 'B');
+      app._connections['a'] = connA;
+      app._connections['b'] = connB;
+
+      var fc = new window.TerminalDeck.FolderCell('f1', 'Folder', [
+        { id: 'a', name: 'A', connection: connA },
+        { id: 'b', name: 'B', connection: connB }
+      ]);
+      var cell = app._engine._cells[0];
+      app._engine._cellMap.set(cell, {
+        connection: connA, terminalId: 'a', folderCell: fc
+      });
+
+      // Stub _highlightCell since mock cell has no classList
+      app._highlightCell = sinon.stub();
+
+      app._handleTerminalListSelect('b');
+
+      expect(app._engine._switchFolderTab.calledWith(cell, 'b')).to.be.true;
+    });
+  });
+
+  it('_handleSessionsUpdate adds new terminal to active folder cell', function () {
+    var app = new App();
+    return app.init().then(function () {
+      var connA = makeConn(window, 'a', 'A');
+      app._connections['a'] = connA;
+      app._sessionFolders = { a: 'f1', b: 'f1' };
+
+      var fc = new window.TerminalDeck.FolderCell('f1', 'Folder', [
+        { id: 'a', name: 'A', connection: connA }
+      ]);
+      app._folderCells['f1'] = fc;
+      var cell = app._engine._cells[0];
+      app._engine._cellMap.set(cell, {
+        connection: connA, terminalId: 'a', folderCell: fc
+      });
+      // Add cell-header to cell
+      cell.querySelector = function (sel) {
+        if (sel === '.cell-header') return { style: {} };
+        return null;
+      };
+
+      app._handleSessionsUpdate([
+        { id: 'a', name: 'A' },
+        { id: 'b', name: 'B' }
+      ]);
+
+      var tabs = fc.getTerminals();
+      var bTab = tabs.find(function (t) { return t.id === 'b'; });
+      expect(bTab).to.exist;
+    });
+  });
+
+  it('_handleSessionsUpdate removes destroyed terminal from folder cell', function () {
+    var app = new App();
+    return app.init().then(function () {
+      var connA = makeConn(window, 'a', 'A');
+      var connB = makeConn(window, 'b', 'B');
+      app._connections['a'] = connA;
+      app._connections['b'] = connB;
+      app._sessionFolders = { a: 'f1', b: 'f1' };
+
+      var fc = new window.TerminalDeck.FolderCell('f1', 'Folder', [
+        { id: 'a', name: 'A', connection: connA },
+        { id: 'b', name: 'B', connection: connB }
+      ]);
+      app._folderCells['f1'] = fc;
+      var cell = app._engine._cells[0];
+      app._engine._cellMap.set(cell, {
+        connection: connA, terminalId: 'a', folderCell: fc
+      });
+      cell.querySelector = function () { return { style: {} }; };
+
+      // 'b' is destroyed (not in sessions update)
+      app._handleSessionsUpdate([{ id: 'a', name: 'A' }]);
+
+      var tabs = fc.getTerminals();
+      expect(tabs.find(function (t) { return t.id === 'b'; })).to.not.exist;
+    });
+  });
+
+  // --- Unit 6: Sidebar UI ---
+
+  it('TerminalList has onOpenFolderInGrid callback', function () {
+    var app = new App();
+    return app.init().then(function () {
+      if (app._terminalList) {
+        expect(app._terminalList.onOpenFolderInGrid).to.be.a('function');
+      }
+    });
+  });
+
+  it('TerminalList folder element has Open in grid button', function () {
+    // Test the terminal-list directly
+    delete require.cache[require.resolve('./terminal-list')];
+    require('./terminal-list');
+    var TerminalList = window.TerminalDeck.TerminalList;
+    var container = document.createElement('div');
+    var tl = new TerminalList(container);
+    tl.setFolderData([{ id: 'f1', name: 'F1', parentId: null, collapsed: false }], {});
+    tl.render([]);
+    var openBtn = container.querySelector('.tl-btn-folder-open-grid');
+    expect(openBtn).to.exist;
+  });
+
+  it('onOpenFolderInGrid callback fires when Open in grid button is clicked', function () {
+    delete require.cache[require.resolve('./terminal-list')];
+    require('./terminal-list');
+    var TerminalList = window.TerminalDeck.TerminalList;
+    var container = document.createElement('div');
+    var tl = new TerminalList(container);
+    var fired = null;
+    tl.onOpenFolderInGrid = function (fid) { fired = fid; };
+    tl.setFolderData([{ id: 'f1', name: 'F1', parentId: null, collapsed: false }], {});
+    tl.render([]);
+    var openBtn = container.querySelector('.tl-btn-folder-open-grid');
+    openBtn.click();
+    expect(fired).to.equal('f1');
+  });
+
+  it('cell popover shows folders section when folders are available', function () {
+    // Use the real LayoutEngine for this test
+    var dom2 = new (require('jsdom').JSDOM)(
+      '<!DOCTYPE html><html><body><div id="g"></div></body></html>',
+      { url: 'http://localhost:3000' }
+    );
+    global.document = dom2.window.document;
+    global.window = dom2.window;
+
+    delete require.cache[require.resolve('./folder-cell')];
+    delete require.cache[require.resolve('./layout')];
+    require('./folder-cell');
+    require('./layout');
+
+    var LayoutEngine = dom2.window.TerminalDeck.LayoutEngine;
+    var grid = dom2.window.document.getElementById('g');
+    var engine = new LayoutEngine(grid);
+    engine._folders = [{ id: 'f1', name: 'MyFolder' }];
+    engine.setGrid('1x1');
+
+    var cell = engine._cells[0];
+    engine._showCellPopover(cell);
+
+    var popover = cell.querySelector('.cell-popover');
+    expect(popover).to.exist;
+    var folderSection = popover.querySelector('.popover-section');
+    expect(folderSection).to.exist;
+    var folderLabel = folderSection.querySelector('.popover-section-label');
+    expect(folderLabel.textContent).to.equal('Folders');
+  });
+
+  it('cell popover does not show folders section when no folders', function () {
+    var dom2 = new (require('jsdom').JSDOM)(
+      '<!DOCTYPE html><html><body><div id="g"></div></body></html>',
+      { url: 'http://localhost:3000' }
+    );
+    global.document = dom2.window.document;
+    global.window = dom2.window;
+
+    delete require.cache[require.resolve('./folder-cell')];
+    delete require.cache[require.resolve('./layout')];
+    require('./folder-cell');
+    require('./layout');
+
+    var LayoutEngine = dom2.window.TerminalDeck.LayoutEngine;
+    var grid = dom2.window.document.getElementById('g');
+    var engine = new LayoutEngine(grid);
+    engine._folders = [];
+    // Add a minimized terminal so popover can show
+    engine._minimized.set('t1', { config: { name: 'T1' } });
+    engine.setGrid('1x1');
+
+    var cell = engine._cells[0];
+    engine._showCellPopover(cell);
+
+    var popover = cell.querySelector('.cell-popover');
+    expect(popover).to.exist;
+    expect(popover.querySelector('.popover-section')).to.not.exist;
   });
 });

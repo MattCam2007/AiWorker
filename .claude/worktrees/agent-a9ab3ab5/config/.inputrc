@@ -1,0 +1,12 @@
+# Complete the common prefix on first Tab, show options on second Tab
+set show-all-if-ambiguous off
+
+# Color completions by file type (like ls --color)
+set colored-stats on
+
+# Append slash to completed directory names
+set mark-directories on
+set mark-symlinked-directories on
+
+# Case-insensitive completion
+set completion-ignore-case on

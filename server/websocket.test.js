@@ -1,10 +1,13 @@
 const { expect } = require('chai');
 const sinon = require('sinon');
+const fs = require('fs');
 const http = require('http');
 const WebSocket = require('ws');
 const { execSync } = require('child_process');
 const { TerminalWSServer } = require('./websocket');
-const { SessionManager } = require('./sessions');
+const { SessionManager, DEFAULT_INSTANCE } = require('./sessions');
+
+const TEST_INSTANCES_PATH = '/tmp/terminaldeck-ws-test-instances.json';
 
 function cleanupTmuxSessions() {
   try {
@@ -34,11 +37,13 @@ describe('TerminalWSServer', function () {
   const testConfig = {
     settings: { shell: '/bin/bash' },
     tmuxSocket: 'terminaldeck-test',
-    sessionPrefix: 'terminaldeck-test-'
+    sessionPrefix: 'terminaldeck-test-',
+    instancesPath: TEST_INSTANCES_PATH
   };
 
   beforeEach(async () => {
     cleanupTmuxSessions();
+    try { fs.unlinkSync(TEST_INSTANCES_PATH); } catch {}
     sessionMgr = new SessionManager(testConfig);
 
     httpServer = http.createServer();
@@ -58,6 +63,7 @@ describe('TerminalWSServer', function () {
       httpServer.close(resolve);
     });
     cleanupTmuxSessions();
+    try { fs.unlinkSync(TEST_INSTANCES_PATH); } catch {};
   });
 
   function connectTerminalWS(terminalId) {
@@ -176,7 +182,7 @@ describe('TerminalWSServer', function () {
   describe('terminal connection', () => {
     it('establishes a terminal WebSocket and receives output', async () => {
       // Create a terminal first
-      const result = await sessionMgr.createTerminal('Test');
+      const result = await sessionMgr.createTerminal(DEFAULT_INSTANCE, 'Test');
       const ws = await connectTerminalWS(result.id);
       const msg = await waitForMessage(ws, (m) => m.type === 'output');
       expect(msg.type).to.equal('output');
@@ -196,7 +202,7 @@ describe('TerminalWSServer', function () {
 
   describe('input', () => {
     it('sends input to the terminal via WebSocket', async () => {
-      const result = await sessionMgr.createTerminal('Test');
+      const result = await sessionMgr.createTerminal(DEFAULT_INSTANCE, 'Test');
       const ws = await connectTerminalWS(result.id);
       await waitForMessage(ws, (m) => m.type === 'output');
 
@@ -212,7 +218,7 @@ describe('TerminalWSServer', function () {
 
   describe('resize', () => {
     it('handles resize messages with valid dimensions', async () => {
-      const result = await sessionMgr.createTerminal('Test');
+      const result = await sessionMgr.createTerminal(DEFAULT_INSTANCE, 'Test');
       const ws = await connectTerminalWS(result.id);
       await waitForMessage(ws, (m) => m.type === 'output');
 
@@ -223,7 +229,7 @@ describe('TerminalWSServer', function () {
     });
 
     it('ignores resize messages with invalid dimensions', async () => {
-      const result = await sessionMgr.createTerminal('Test');
+      const result = await sessionMgr.createTerminal(DEFAULT_INSTANCE, 'Test');
       const ws = await connectTerminalWS(result.id);
       await waitForMessage(ws, (m) => m.type === 'output');
 
@@ -240,7 +246,7 @@ describe('TerminalWSServer', function () {
 
   describe('multi-client', () => {
     it('multiple clients share the same pty and receive the same output', async () => {
-      const result = await sessionMgr.createTerminal('Test');
+      const result = await sessionMgr.createTerminal(DEFAULT_INSTANCE, 'Test');
       const ws1 = await connectTerminalWS(result.id);
       const ws2 = await connectTerminalWS(result.id);
 
@@ -264,7 +270,7 @@ describe('TerminalWSServer', function () {
 
   describe('disconnect cleanup', () => {
     it('cleans up pty attachment on disconnect without killing tmux session', async () => {
-      const result = await sessionMgr.createTerminal('Test');
+      const result = await sessionMgr.createTerminal(DEFAULT_INSTANCE, 'Test');
       const ws = await connectTerminalWS(result.id);
       await waitForMessage(ws, (m) => m.type === 'output');
       ws.close();
@@ -282,7 +288,7 @@ describe('TerminalWSServer', function () {
 
   describe('control messages', () => {
     it('properly frames JSON messages on terminal WS', async () => {
-      const result = await sessionMgr.createTerminal('Test');
+      const result = await sessionMgr.createTerminal(DEFAULT_INSTANCE, 'Test');
       const ws = await connectTerminalWS(result.id);
       const msg = await waitForMessage(ws, (m) => m.type === 'output');
       expect(msg).to.have.property('type');
@@ -311,7 +317,7 @@ describe('TerminalWSServer', function () {
     });
 
     it('resize message with out-of-range values does not call pty.resize', async () => {
-      const result = await sessionMgr.createTerminal('Test');
+      const result = await sessionMgr.createTerminal(DEFAULT_INSTANCE, 'Test');
       const ws = await connectTerminalWS(result.id);
       await waitForMessage(ws, (m) => m.type === 'output');
 
@@ -366,7 +372,7 @@ describe('TerminalWSServer', function () {
     });
 
     it('PTY write when terminal has exited does not crash', async () => {
-      const result = await sessionMgr.createTerminal('Test');
+      const result = await sessionMgr.createTerminal(DEFAULT_INSTANCE, 'Test');
       const ws = await connectTerminalWS(result.id);
       await waitForMessage(ws, (m) => m.type === 'output');
 

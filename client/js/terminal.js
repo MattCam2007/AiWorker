@@ -257,7 +257,12 @@
     var protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     var host = window.location.host || 'localhost:3000';
     var token = (ns._serverToken || '');
-    var url = protocol + '//' + host + '/ws/terminal/' + this.id + (token ? '?t=' + encodeURIComponent(token) : '');
+    var instanceId = (ns._instanceId || '');
+    var params = [];
+    if (token) params.push('t=' + encodeURIComponent(token));
+    if (instanceId) params.push('instance=' + encodeURIComponent(instanceId));
+    var url = protocol + '//' + host + '/ws/terminal/' + this.id +
+      (params.length ? '?' + params.join('&') : '');
 
     this._ws = new WebSocket(url);
 

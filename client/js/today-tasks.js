@@ -145,6 +145,10 @@
     });
   };
 
+  TodayTasks.prototype.refresh = function () {
+    return this._load();
+  };
+
   TodayTasks.prototype._startPolling = function () {
     var self = this;
     this._stopPolling();
@@ -200,11 +204,27 @@
     });
   };
 
+  TodayTasks.prototype._pushTask = function (id) {
+    var self = this;
+    // Optimistic remove — task is moving to next day
+    self._tasks = self._tasks.filter(function (t) { return t.id !== id; });
+    self._render();
+
+    this._api('POST', '/tasks/' + id + '/push').catch(function () {
+      // On failure, reload to restore true state
+      self._load();
+    });
+  };
+
   TodayTasks.prototype._render = function () {
     var self = this;
     var frag = document.createDocumentFragment();
 
-    this._tasks.forEach(function (task) {
+    var sorted = this._tasks.slice().sort(function (a, b) {
+      return (a.done ? 1 : 0) - (b.done ? 1 : 0);
+    });
+
+    sorted.forEach(function (task) {
       var row = document.createElement('div');
       row.className = 'tt-item' + (task.done ? ' tt-item-done' : '');
       row.dataset.id = task.id;
@@ -221,6 +241,15 @@
       text.className = 'tt-text';
       text.textContent = task.text;
 
+      var push = document.createElement('button');
+      push.className = 'tt-push';
+      push.title = 'Push to tomorrow';
+      push.textContent = '\u2192'; // →
+      push.addEventListener('click', function (e) {
+        e.stopPropagation();
+        self._pushTask(task.id);
+      });
+
       var del = document.createElement('button');
       del.className = 'tt-delete';
       del.title = 'Delete task';
@@ -232,6 +261,7 @@
 
       row.appendChild(cb);
       row.appendChild(text);
+      row.appendChild(push);
       row.appendChild(del);
       frag.appendChild(row);
     });

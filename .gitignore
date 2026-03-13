@@ -1,2 +1,33 @@
+# Dependencies
 node_modules/
+
+# Environment / secrets
 .env
+.env.*
+
+# Container home directory (bind-mounted, contains caches/configs/history)
+home/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor / IDE
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Coverage / test output
+coverage/
+.nyc_output/
+
+# Temp / scratch directories
+SecurityTemp/
+
+home/

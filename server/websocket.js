@@ -4,6 +4,7 @@ const { ActivityTracker } = require('./activity');
 const { ForegroundTracker } = require('./foreground');
 const { readHistory } = require('./history');
 const { PromptDetector } = require('./prompt-detector');
+const { DEFAULT_INSTANCE } = require('./sessions');
 const log = require('./log');
 
 const MAX_TERM_COLS = 500;
@@ -22,7 +23,8 @@ class TerminalWSServer {
 
   constructor(httpServer, sessionManager, options = {}) {
     this._sessionManager = sessionManager;
-    this._folderManager = options.folderManager || null;
+    // Support per-instance folder managers via getFolderManager(instanceId), or a single folderManager
+    this._getFolderManager = options.getFolderManager || (() => options.folderManager || null);
     this._serverToken = options.serverToken || null;
     // terminalId -> { pty, clients: Set<ws>, disconnectTimer, exited }
     this._terminals = new Map();
@@ -31,11 +33,12 @@ class TerminalWSServer {
 
     // Task completion detection: fires after substantial output followed by silence
     this._promptDetector = new PromptDetector((terminalId) => {
+      const instanceId = this._sessionManager.getInstanceForSession(terminalId);
       this._sendToControl({
         type: 'task_complete',
         terminalId,
         timestamp: new Date().toISOString()
-      });
+      }, instanceId);
     });
 
     // Control channel clients
@@ -65,9 +68,11 @@ class TerminalWSServer {
       }
 
       const pathname = url.pathname;
+      const instanceId = url.searchParams.get('instance') || DEFAULT_INSTANCE;
 
       if (pathname === '/ws/control') {
         this._controlWss.handleUpgrade(req, socket, head, (ws) => {
+          ws.instanceId = instanceId;
           this._handleControlConnection(ws);
         });
         return;
@@ -77,6 +82,7 @@ class TerminalWSServer {
       if (match) {
         const terminalId = match[1];
         this._terminalWss.handleUpgrade(req, socket, head, (ws) => {
+          ws.instanceId = instanceId;
           this._handleTerminalConnection(ws, terminalId);
         });
         return;
@@ -126,12 +132,13 @@ class TerminalWSServer {
     ws._pendingPing = 0;
     ws._ctrlRate = { count: 0, windowStart: Date.now() };
 
-    // Send initial folder state to newly connected client
-    if (this._folderManager) {
+    // Send initial folder state to newly connected client (instance-scoped)
+    const folderManager = this._getFolderManager(ws.instanceId);
+    if (folderManager) {
       this._safeSend(ws, JSON.stringify({
         type: 'folders',
-        folders: this._folderManager.getFolders(),
-        sessionFolders: this._folderManager.getSessionFolders()
+        folders: folderManager.getFolders(),
+        sessionFolders: folderManager.getSessionFolders()
       }));
     }
 
@@ -159,28 +166,39 @@ class TerminalWSServer {
         return;
       }
 
+      const instanceId = ws.instanceId;
       try {
         switch (msg.type) {
           case 'create_terminal': {
             const created = await this._sessionManager.createTerminal(
-              msg.name, msg.command, msg.headerBg, msg.headerColor
+              instanceId, msg.name, msg.command, msg.headerBg, msg.headerColor, msg.cwd
             );
-            if (msg.folderId && this._folderManager) {
-              try { this._folderManager.moveTerminal(created.id, msg.folderId); } catch {}
-              this._broadcastFolders();
+            const fm = this._getFolderManager(instanceId);
+            if (msg.folderId && fm) {
+              try { fm.moveTerminal(created.id, msg.folderId); } catch {}
+              this._broadcastFolders(instanceId);
             }
-            await this._broadcastSessions();
+            // Run startCommand if provided (sent as keystrokes to the terminal)
+            if (msg.startCommand && typeof msg.startCommand === 'string' && msg.startCommand.trim()) {
+              try {
+                await this._sessionManager.sendKeys(created.id, msg.startCommand.trim());
+              } catch (err) {
+                log.debug(`[ws] failed to send startCommand: ${err.message}`);
+              }
+            }
+            await this._broadcastSessions(instanceId);
             break;
           }
           case 'destroy_terminal': {
             if (!msg.id) break;
             log.warn(`[ws] destroy_terminal received for ${short(msg.id)} from control client`);
-            await this._sessionManager.destroySession(msg.id);
-            if (this._folderManager) {
-              this._folderManager.moveTerminal(msg.id, null);
-              this._broadcastFolders();
+            await this._sessionManager.destroySession(instanceId, msg.id);
+            const fmD = this._getFolderManager(instanceId);
+            if (fmD) {
+              fmD.moveTerminal(msg.id, null);
+              this._broadcastFolders(instanceId);
             }
-            await this._broadcastSessions();
+            await this._broadcastSessions(instanceId);
             break;
           }
           case 'update_terminal': {
@@ -190,37 +208,43 @@ class TerminalWSServer {
             if (msg.headerBg !== undefined) updates.headerBg = msg.headerBg;
             if (msg.headerColor !== undefined) updates.headerColor = msg.headerColor;
             this._sessionManager.updateSession(msg.id, updates);
-            await this._broadcastSessions();
+            await this._broadcastSessions(instanceId);
             break;
           }
           case 'create_folder': {
-            if (!this._folderManager) break;
-            this._folderManager.createFolder(msg.name, msg.parentId || null);
-            this._broadcastFolders();
+            const fmCF = this._getFolderManager(instanceId);
+            if (!fmCF) break;
+            fmCF.createFolder(msg.name, msg.parentId || null);
+            this._broadcastFolders(instanceId);
             break;
           }
           case 'update_folder': {
-            if (!this._folderManager || !msg.id) break;
+            const fmUF = this._getFolderManager(instanceId);
+            if (!fmUF || !msg.id) break;
             const folderUpdates = {};
             if (msg.name !== undefined) folderUpdates.name = msg.name;
             if (msg.collapsed !== undefined) folderUpdates.collapsed = msg.collapsed;
             if (msg.parentId !== undefined) folderUpdates.parentId = msg.parentId;
             if (msg.headerBg !== undefined) folderUpdates.headerBg = msg.headerBg;
             if (msg.headerColor !== undefined) folderUpdates.headerColor = msg.headerColor;
-            this._folderManager.updateFolder(msg.id, folderUpdates);
-            this._broadcastFolders();
+            if (msg.headerHighlight !== undefined) folderUpdates.headerHighlight = msg.headerHighlight;
+            if (msg.startCommand !== undefined) folderUpdates.startCommand = msg.startCommand;
+            fmUF.updateFolder(msg.id, folderUpdates);
+            this._broadcastFolders(instanceId);
             break;
           }
           case 'delete_folder': {
-            if (!this._folderManager || !msg.id) break;
-            this._folderManager.deleteFolder(msg.id);
-            this._broadcastFolders();
+            const fmDF = this._getFolderManager(instanceId);
+            if (!fmDF || !msg.id) break;
+            fmDF.deleteFolder(msg.id);
+            this._broadcastFolders(instanceId);
             break;
           }
           case 'move_terminal': {
-            if (!this._folderManager || !msg.id) break;
-            this._folderManager.moveTerminal(msg.id, msg.folderId || null);
-            this._broadcastFolders();
+            const fmMT = this._getFolderManager(instanceId);
+            if (!fmMT || !msg.id) break;
+            fmMT.moveTerminal(msg.id, msg.folderId || null);
+            this._broadcastFolders(instanceId);
             break;
           }
         }
@@ -237,9 +261,12 @@ class TerminalWSServer {
     });
   }
 
-  _sendToControl(msg) {
+  // Send to control clients. If instanceId is provided, only sends to matching instance.
+  // Pass null to broadcast to all instances (e.g. config reload, tasks update).
+  _sendToControl(msg, instanceId) {
     const data = typeof msg === 'string' ? msg : JSON.stringify(msg);
     for (const ws of this._controlClients) {
+      if (instanceId != null && ws.instanceId !== instanceId) continue;
       if (ws.readyState === ws.OPEN) {
         this._safeSend(ws, data);
       }
@@ -254,22 +281,28 @@ class TerminalWSServer {
     try { ws.send(data); } catch (err) { log.debug('[ws] send failed:', err.message); }
   }
 
-  async _broadcastSessions() {
-    const sessions = await this._sessionManager.listSessions();
-    this._sendToControl({ type: 'sessions', sessions });
+  async _broadcastSessions(instanceId) {
+    const sessions = await this._sessionManager.listSessions(instanceId);
+    this._sendToControl({ type: 'sessions', sessions }, instanceId);
   }
 
-  _broadcastFolders() {
-    if (!this._folderManager) return;
+  _broadcastFolders(instanceId) {
+    const fm = this._getFolderManager(instanceId);
+    if (!fm) return;
     this._sendToControl({
       type: 'folders',
-      folders: this._folderManager.getFolders(),
-      sessionFolders: this._folderManager.getSessionFolders()
-    });
+      folders: fm.getFolders(),
+      sessionFolders: fm.getSessionFolders()
+    }, instanceId);
   }
 
+  // Config and task updates are global — broadcast to all instances
   broadcastConfigReload(config) {
-    this._sendToControl({ type: 'config_reload', config });
+    this._sendToControl({ type: 'config_reload', config }, null);
+  }
+
+  broadcastTasksUpdate(date) {
+    this._sendToControl({ type: 'tasks_update', date }, null);
   }
 
   // --- PTY Lifecycle ---
@@ -478,10 +511,17 @@ class TerminalWSServer {
 
   startActivityBroadcasting() {
     this._activity.startBroadcasting((msg) => {
-      this._sendToControl(msg);
+      // Scope activity to the instance that owns the terminal
+      const instanceId = msg.terminalId
+        ? this._sessionManager.getInstanceForSession(msg.terminalId)
+        : null;
+      this._sendToControl(msg, instanceId);
     });
     this._foreground.startBroadcasting(this._sessionManager, (msg) => {
-      this._sendToControl(msg);
+      const instanceId = msg.terminalId
+        ? this._sessionManager.getInstanceForSession(msg.terminalId)
+        : null;
+      this._sendToControl(msg, instanceId);
     });
   }
 
@@ -501,7 +541,7 @@ class TerminalWSServer {
         this._historyDebounceTimer = setTimeout(() => {
           try {
             const history = readHistory(historyFilePath);
-            this._sendToControl({ type: 'history_update', history });
+            this._sendToControl({ type: 'history_update', history }, null); // global
           } catch (err) {
             log.debug('[history] failed to read history file:', err.message);
           }

@@ -12,9 +12,11 @@
       "id": "f9bc68f3-70bc-435e-8ea5-4fb6fd2cc7e5",
       "name": "Ai worker",
       "parentId": null,
-      "collapsed": false,
-      "headerBg": "#33d9b2",
-      "headerColor": "#1b1b2f"
+      "collapsed": true,
+      "headerBg": "#000000",
+      "headerColor": "#33d9b2",
+      "headerHighlight": "#706fd3",
+      "startCommand": "cd AiWorker"
     }
   ],
   "sessionFolders": {
@@ -29,8 +31,23 @@
     "2fde4fb1-50b9-4711-b1fb-a3ee9ce32078": "f9bc68f3-70bc-435e-8ea5-4fb6fd2cc7e5",
     "e1671218-c55a-4a0a-a468-be83c3890b85": "f9bc68f3-70bc-435e-8ea5-4fb6fd2cc7e5",
     "f1690f56-f900-415e-a5ef-559d9180e8ee": "f9bc68f3-70bc-435e-8ea5-4fb6fd2cc7e5",
-    "b8b48ea2-c355-4603-a311-a84a6fa17f16": "f9bc68f3-70bc-435e-8ea5-4fb6fd2cc7e5",
     "014f131c-94a9-4479-a5be-d817af7dc8cb": "f9bc68f3-70bc-435e-8ea5-4fb6fd2cc7e5",
-    "5e0c0cc0-ba78-4aec-ade2-4a125886930a": "f9bc68f3-70bc-435e-8ea5-4fb6fd2cc7e5"
+    "b05e1a79-472a-4a43-8465-34a47ae58c88": "f9bc68f3-70bc-435e-8ea5-4fb6fd2cc7e5",
+    "7e8becbc-7553-47e3-946c-2762df36a793": "f9bc68f3-70bc-435e-8ea5-4fb6fd2cc7e5",
+    "7678499e-cef6-4cdf-93e0-3c87db06b6bb": "f9bc68f3-70bc-435e-8ea5-4fb6fd2cc7e5",
+    "66138fb4-1023-4646-befc-5639e26f73b0": "f9bc68f3-70bc-435e-8ea5-4fb6fd2cc7e5",
+    "1094a334-fb15-4fab-8133-6c9a1d9c5912": "f9bc68f3-70bc-435e-8ea5-4fb6fd2cc7e5",
+    "7de793b0-ec22-46ea-b359-c422e01bd154": "f9bc68f3-70bc-435e-8ea5-4fb6fd2cc7e5",
+    "c3e39235-96dd-46df-bbeb-9fa3cb671f3f": "f9bc68f3-70bc-435e-8ea5-4fb6fd2cc7e5",
+    "15dde70b-59da-4592-aed4-da68e2d0a716": "f9bc68f3-70bc-435e-8ea5-4fb6fd2cc7e5",
+    "7695c01b-ce05-44fe-ab7b-158cff22940d": "f9bc68f3-70bc-435e-8ea5-4fb6fd2cc7e5",
+    "84feec59-01ad-400d-9a34-b6f56f96e541": "f9bc68f3-70bc-435e-8ea5-4fb6fd2cc7e5",
+    "e916f703-df16-4c59-919d-470a8473609a": "f9bc68f3-70bc-435e-8ea5-4fb6fd2cc7e5",
+    "67555e50-dcd0-4e6f-81e0-9931e6b23c47": "6b9ff0be-8fad-4474-941e-87a95749593f",
+    "4ab163be-b82f-42ef-bb40-5e8c18ddff04": "f9bc68f3-70bc-435e-8ea5-4fb6fd2cc7e5",
+    "integration-guide": "6b9ff0be-8fad-4474-941e-87a95749593f",
+    "6bd27a11-1545-4166-a231-ff9a87c79be0": "f9bc68f3-70bc-435e-8ea5-4fb6fd2cc7e5",
+    "0e98d625-4fb0-4a3e-b26e-f084c74d5a6d": "f9bc68f3-70bc-435e-8ea5-4fb6fd2cc7e5",
+    "395a217b-5cd5-4559-9b76-bc74b861a52e": "f9bc68f3-70bc-435e-8ea5-4fb6fd2cc7e5"
   }
 }

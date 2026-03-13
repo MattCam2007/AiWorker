@@ -56,7 +56,7 @@ class FolderManager {
     if (parentId != null && !this._folders.find(f => f.id === parentId)) {
       throw new Error('Parent folder not found');
     }
-    const folder = { id: randomUUID(), name: trimmed, parentId: parentId || null, collapsed: false, headerBg: null, headerColor: null };
+    const folder = { id: randomUUID(), name: trimmed, parentId: parentId || null, collapsed: false, headerBg: null, headerColor: null, headerHighlight: null, startCommand: null };
     this._folders.push(folder);
     this._save();
     return folder;
@@ -85,6 +85,16 @@ class FolderManager {
     }
     if (updates.headerColor !== undefined) {
       folder.headerColor = isValidFolderColor(updates.headerColor) ? updates.headerColor : null;
+    }
+    if (updates.headerHighlight !== undefined) {
+      folder.headerHighlight = isValidFolderColor(updates.headerHighlight) ? updates.headerHighlight : null;
+    }
+    if (updates.startCommand !== undefined) {
+      if (updates.startCommand === null || updates.startCommand === '') {
+        folder.startCommand = null;
+      } else if (typeof updates.startCommand === 'string' && updates.startCommand.length <= 500) {
+        folder.startCommand = updates.startCommand.trim() || null;
+      }
     }
     this._save();
     return true;

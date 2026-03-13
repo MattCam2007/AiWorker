@@ -6,12 +6,15 @@
   // --- Init ---
 
   function App() {
+    this.instanceId = null;
     this._config = null;
     this._connections = {};  // id -> TerminalConnection or EditorPanel
     this._engine = null;
     this._statusEl = null;
     this._controlWs = null;
     this._fileTree = null;
+    this._claudeFileTree = null;
+    this._opencodeFileTree = null;
     this._terminalList = null;
     this._todayTasks = null;
     this._commandPalette = null;
@@ -25,10 +28,39 @@
     this._currentContext = 'generic'; // resolved context category for active terminal
     this._folders = [];
     this._sessionFolders = {};
+    this._folderCells = {}; // folderId -> FolderCell currently displayed in a grid cell
   }
+
+  App.prototype._initInstanceId = function () {
+    var params = new URLSearchParams(window.location.search);
+    var id = params.get('instance');
+    if (!id) {
+      try { id = window.localStorage.getItem('terminaldeck-instanceId'); } catch {}
+    }
+    if (!id) {
+      try {
+        id = crypto.randomUUID();
+      } catch {
+        id = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+          var r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
+          return v.toString(16);
+        });
+      }
+    }
+    this.instanceId = id;
+    ns._instanceId = id;
+    try { window.localStorage.setItem('terminaldeck-instanceId', id); } catch {}
+    if (!params.get('instance')) {
+      params.set('instance', id);
+      try { window.history.replaceState(null, '', '?' + params.toString()); } catch {}
+    }
+  };
 
   App.prototype.init = function () {
     var self = this;
+
+    this._initInstanceId();
+    this._suppressMobileContextMenus();
 
     // Fetch config for theme, then load sessions and set up UI
     return fetch('/api/config')
@@ -41,6 +73,8 @@
         self._buildHeader();
         self._wireCreateDialog();
         self._initFileTree();
+        self._initClaudeFileTree();
+        self._initOpencodeFileTree();
         self._initTodayTasks();
         self._initTerminalList();
         self._initSidebarSections();
@@ -104,6 +138,18 @@
       self._showCreateDialog();
     };
 
+    this._engine._onOpenFolderInCell = function (cell, folderId) {
+      self._openFolderInCell(folderId, cell);
+    };
+
+    this._engine._onCreateTerminalInFolder = function (folderId) {
+      self._showCreateDialog(folderId);
+    };
+
+    this._engine._onEditFolder = function (folderId) {
+      self._showFolderSettingsDialog(folderId);
+    };
+
     // On mobile, force 1x1 grid; otherwise default to 2x2
     if (!this._engine.checkMobile()) {
       this._engine.setGrid('2x2');
@@ -145,7 +191,8 @@
     var self = this;
     var protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     var host = window.location.host || 'localhost:3000';
-    var url = protocol + '//' + host + '/ws/control?t=' + encodeURIComponent(ns._serverToken || '');
+    var url = protocol + '//' + host + '/ws/control?t=' + encodeURIComponent(ns._serverToken || '') +
+      '&instance=' + encodeURIComponent(this.instanceId || ns._instanceId || '');
 
     this._controlWs = new WebSocket(url);
 
@@ -163,6 +210,7 @@
           break;
         case 'folders':
           self._folders = msg.folders || [];
+          if (self._engine) self._engine._folders = self._folders;
           self._sessionFolders = msg.sessionFolders || {};
           // Re-resolve colors for terminals that inherit from folders
           Object.keys(self._connections).forEach(function (id) {
@@ -179,6 +227,14 @@
               }
             }
           });
+          // Update colors on any open folder tab groups
+          if (self._engine) {
+            self._folders.forEach(function (folder) {
+              if (self._folderCells && self._folderCells[folder.id]) {
+                self._engine.updateFolderColors(folder.id, folder.headerBg || null, folder.headerColor || null, folder.headerHighlight || null);
+              }
+            });
+          }
           self._syncTerminalList();
           break;
         case 'config_reload':
@@ -196,6 +252,9 @@
         case 'pane_context':
           self._handlePaneContext(msg);
           break;
+        case 'tasks_update':
+          if (self._todayTasks) self._todayTasks.refresh();
+          break;
       }
     });
 
@@ -207,7 +266,7 @@
     });
   };
 
-  App.prototype._sendCreateTerminal = function (name, command, headerBg, headerColor, folderId) {
+  App.prototype._sendCreateTerminal = function (name, command, headerBg, headerColor, folderId, cwd, startCommand) {
     if (this._controlWs && this._controlWs.readyState === WebSocket.OPEN) {
       this._controlWs.send(
         JSON.stringify({
@@ -216,7 +275,9 @@
           command: command,
           headerBg: headerBg || null,
           headerColor: headerColor || null,
-          folderId: folderId || null
+          folderId: folderId || null,
+          cwd: cwd || null,
+          startCommand: startCommand || null
         })
       );
     }
@@ -330,10 +391,11 @@
 
   App.prototype._loadFolders = function () {
     var self = this;
-    return fetch('/api/folders')
+    return fetch('/api/folders?instance=' + encodeURIComponent(this.instanceId || ''))
       .then(function (res) { return res.json(); })
       .then(function (data) {
         self._folders = data.folders || [];
+        if (self._engine) self._engine._folders = self._folders;
         self._sessionFolders = data.sessionFolders || {};
       })
       .catch(function (err) {
@@ -343,7 +405,7 @@
 
   App.prototype._loadSessions = function () {
     var self = this;
-    return fetch('/api/sessions')
+    return fetch('/api/sessions?instance=' + encodeURIComponent(this.instanceId || ''))
       .then(function (res) { return res.json(); })
       .then(function (sessions) {
         self._applySessions(sessions);
@@ -435,7 +497,28 @@
       if (!currentIds.has(s.id)) {
         var conn = self._createConnection(s.id, s.name, s.headerBg, s.headerColor);
         self._connections[s.id] = conn;
-        self._assignToFirstEmptyCell(s.id, conn);
+
+        // If folder is open in a grid cell, add as tab instead of new cell
+        var folderId = self._sessionFolders[s.id] || null;
+        var addedToFolder = false;
+        if (folderId && self._folderCells[folderId]) {
+          var fc = self._folderCells[folderId];
+          fc.addTerminal(s.id, s.name, conn);
+          // Re-render the header for the cell hosting this folder
+          for (var ci = 0; ci < self._engine._cells.length; ci++) {
+            var ci_cell = self._engine._cells[ci];
+            var ci_info = self._engine._cellMap.get(ci_cell);
+            if (ci_info && ci_info.folderCell === fc) {
+              var ci_header = ci_cell.querySelector('.cell-header');
+              fc.renderHeader(ci_header, self._engine._makeFolderCallbacks(ci_cell, fc));
+              addedToFolder = true;
+              break;
+            }
+          }
+        }
+        if (!addedToFolder) {
+          self._assignToFirstEmptyCell(s.id, conn);
+        }
       } else {
         // Update existing connection config and header
         var conn = self._connections[s.id];
@@ -467,6 +550,33 @@
         // Don't remove editor panels — they're managed separately
         if (conn && conn.type === 'editor') return;
         conn.destroy();
+
+        // Remove from any folder cell it belongs to
+        Object.keys(self._folderCells).forEach(function (fid) {
+          var fc = self._folderCells[fid];
+          var tabs = fc.getTerminals();
+          for (var ti = 0; ti < tabs.length; ti++) {
+            if (tabs[ti].id === id) {
+              // Let minimizeTerminal or _clearCell handle the active case;
+              // for inactive tabs just remove from folderCell
+              if (fc.getActiveTerminalId() !== id) {
+                fc.removeTerminal(id);
+                // Re-render header
+                for (var ci = 0; ci < self._engine._cells.length; ci++) {
+                  var ci_cell = self._engine._cells[ci];
+                  var ci_info = self._engine._cellMap.get(ci_cell);
+                  if (ci_info && ci_info.folderCell === fc) {
+                    var ci_h = ci_cell.querySelector('.cell-header');
+                    fc.renderHeader(ci_h, self._engine._makeFolderCallbacks(ci_cell, fc));
+                    break;
+                  }
+                }
+              }
+              break;
+            }
+          }
+        });
+
         if (self._engine) {
           self._engine._removeFromGrid(id);
           self._engine._removeFromMinimized(id);
@@ -648,7 +758,17 @@
         return;
       }
       var command = cmdInput.value.trim();
-      self._sendCreateTerminal(name, command, selectedBg, selectedColor, inFolderId || null);
+      // Look up folder's startCommand if creating in a folder
+      var folderStartCmd = null;
+      if (inFolderId && self._folders) {
+        for (var fsi = 0; fsi < self._folders.length; fsi++) {
+          if (self._folders[fsi].id === inFolderId && self._folders[fsi].startCommand) {
+            folderStartCmd = self._folders[fsi].startCommand;
+            break;
+          }
+        }
+      }
+      self._sendCreateTerminal(name, command, selectedBg, selectedColor, inFolderId || null, null, folderStartCmd);
       closeDialog();
     });
     btnRow.appendChild(createBtn);
@@ -693,6 +813,168 @@
       if (e.key === 'Escape') {
         closeDialog();
         self._pendingCell = null;
+        document.removeEventListener('keydown', onEsc);
+      }
+    };
+    document.addEventListener('keydown', onEsc);
+  };
+
+  // --- Folder Settings Dialog ---
+
+  App.prototype._showFolderSettingsDialog = function (folderId) {
+    var self = this;
+    var folder = null;
+    for (var i = 0; i < (this._folders || []).length; i++) {
+      if (this._folders[i].id === folderId) { folder = this._folders[i]; break; }
+    }
+    if (!folder) return;
+
+    var dialog = document.getElementById('ephemeral-dialog');
+    var backdrop = document.getElementById('ephemeral-backdrop');
+    if (!dialog) return;
+
+    dialog.innerHTML = '';
+    var title = document.createElement('div');
+    title.className = 'ephemeral-title';
+    title.textContent = 'Folder Settings';
+    dialog.appendChild(title);
+
+    // Name field
+    var nameLabel = document.createElement('label');
+    nameLabel.className = 'edit-label';
+    nameLabel.textContent = 'Name';
+    dialog.appendChild(nameLabel);
+
+    var nameInput = document.createElement('input');
+    nameInput.className = 'edit-name-input';
+    nameInput.type = 'text';
+    nameInput.value = folder.name || '';
+    dialog.appendChild(nameInput);
+
+    // Start Command field
+    var cmdLabel = document.createElement('label');
+    cmdLabel.className = 'edit-label';
+    cmdLabel.textContent = 'Start Command';
+    dialog.appendChild(cmdLabel);
+
+    var cmdInput = document.createElement('input');
+    cmdInput.className = 'edit-name-input';
+    cmdInput.type = 'text';
+    cmdInput.placeholder = 'Command to run when a new terminal is created';
+    cmdInput.value = folder.startCommand || '';
+    dialog.appendChild(cmdInput);
+
+    var cmdHint = document.createElement('div');
+    cmdHint.className = 'ephemeral-hint';
+    cmdHint.textContent = 'Runs automatically in new terminals created in this folder.';
+    dialog.appendChild(cmdHint);
+
+    // Color swatches
+    var selectedBg = folder.headerBg || null;
+    var selectedColor = folder.headerColor || null;
+    var selectedHighlight = folder.headerHighlight || null;
+
+    if (this._engine) {
+      var bgLabel = document.createElement('label');
+      bgLabel.className = 'edit-label';
+      bgLabel.textContent = 'Header Background';
+      dialog.appendChild(bgLabel);
+      var bgSwatches = this._engine._createColorSwatches(selectedBg, false, function (color) {
+        selectedBg = color;
+      });
+      dialog.appendChild(bgSwatches);
+
+      var textLabel = document.createElement('label');
+      textLabel.className = 'edit-label';
+      textLabel.textContent = 'Header Text';
+      dialog.appendChild(textLabel);
+      var textSwatches = this._engine._createColorSwatches(selectedColor, false, function (color) {
+        selectedColor = color;
+      });
+      dialog.appendChild(textSwatches);
+
+      var hlLabel = document.createElement('label');
+      hlLabel.className = 'edit-label';
+      hlLabel.textContent = 'Header Highlight';
+      dialog.appendChild(hlLabel);
+      var hlSwatches = this._engine._createColorSwatches(selectedHighlight, false, function (color) {
+        selectedHighlight = color;
+      });
+      dialog.appendChild(hlSwatches);
+    }
+
+    // Buttons
+    var btnRow = document.createElement('div');
+    btnRow.className = 'edit-btn-row';
+
+    var cancelBtn = document.createElement('button');
+    cancelBtn.className = 'edit-cancel';
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      closeDialog();
+    });
+    btnRow.appendChild(cancelBtn);
+
+    var saveBtn = document.createElement('button');
+    saveBtn.className = 'edit-save';
+    saveBtn.textContent = 'Save';
+    saveBtn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      var newName = nameInput.value.trim();
+      if (!newName) {
+        nameInput.style.borderColor = 'var(--td-danger)';
+        nameInput.focus();
+        return;
+      }
+      var startCmd = cmdInput.value.trim() || null;
+      var updates = {
+        name: newName,
+        startCommand: startCmd,
+        headerBg: selectedBg,
+        headerColor: selectedColor,
+        headerHighlight: selectedHighlight
+      };
+      // Live-update folder colors in open tab groups
+      if (self._engine) self._engine.updateFolderColors(folderId, selectedBg, selectedColor, selectedHighlight);
+      self._sendUpdateFolder(folderId, updates);
+      closeDialog();
+    });
+    btnRow.appendChild(saveBtn);
+
+    dialog.appendChild(btnRow);
+
+    // Enter key submits
+    nameInput.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); saveBtn.click(); }
+    });
+    cmdInput.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); saveBtn.click(); }
+    });
+
+    // Show dialog
+    dialog.classList.remove('hidden');
+    if (backdrop) backdrop.classList.remove('hidden');
+    nameInput.focus();
+    nameInput.select();
+
+    function closeDialog() {
+      dialog.classList.add('hidden');
+      if (backdrop) backdrop.classList.add('hidden');
+      dialog.innerHTML = '';
+    }
+
+    if (backdrop) {
+      var onBackdropClick = function () {
+        closeDialog();
+        backdrop.removeEventListener('click', onBackdropClick);
+      };
+      backdrop.addEventListener('click', onBackdropClick);
+    }
+
+    var onEsc = function (e) {
+      if (e.key === 'Escape') {
+        closeDialog();
         document.removeEventListener('keydown', onEsc);
       }
     };
@@ -808,11 +1090,20 @@
       this._terminalList.onMoveTerminal = function (terminalId, folderId) {
         self._sendMoveTerminal(terminalId, folderId);
       };
-      this._terminalList.onUpdateFolderColors = function (id, headerBg, headerColor) {
-        self._sendUpdateFolder(id, { headerBg: headerBg, headerColor: headerColor });
+      this._terminalList.onUpdateFolderColors = function (id, headerBg, headerColor, headerHighlight) {
+        // Live-update any open tab group for this folder
+        if (self._engine) self._engine.updateFolderColors(id, headerBg, headerColor, headerHighlight);
+        self._sendUpdateFolder(id, { headerBg: headerBg, headerColor: headerColor, headerHighlight: headerHighlight });
       };
       this._terminalList.onNewTerminalInFolder = function (folderId) {
         self._showCreateDialog(folderId);
+      };
+      this._terminalList.onOpenFolderInGrid = function (folderId) {
+        var cell = self._findFirstEmptyCell() || (self._engine && self._engine._cells[0]);
+        if (cell) self._openFolderInCell(folderId, cell);
+      };
+      this._terminalList.onEditFolder = function (folderId) {
+        self._showFolderSettingsDialog(folderId);
       };
     }
 
@@ -831,8 +1122,18 @@
   };
 
   App.prototype._initSidebarSections = function () {
+    var isMobileNow = window.matchMedia && window.matchMedia('(max-width: 767px)').matches;
+    var mobileExpanded = { today: true, terminals: true };
+    var defaultCollapsed = { claude: true, opencode: true };
+
     var headers = document.querySelectorAll('.section-header');
     headers.forEach(function (header) {
+      var section = header.dataset.section;
+      if ((isMobileNow && !mobileExpanded[section]) || defaultCollapsed[section]) {
+        var content = header.nextElementSibling;
+        if (content) content.classList.add('collapsed');
+        header.classList.add('collapsed');
+      }
       header.addEventListener('click', function () {
         var content = header.nextElementSibling;
         if (content) content.classList.toggle('collapsed');
@@ -846,6 +1147,22 @@
 
     var self = this;
     var terminalItems = [];
+
+    // Build a map of terminalId -> "Cell N (tab)" for inactive folder tabs
+    var folderTabLocations = {};
+    for (var ci = 0; ci < this._engine._cells.length; ci++) {
+      var cell = this._engine._cells[ci];
+      var cellInfo = this._engine._cellMap.get(cell);
+      if (cellInfo && cellInfo.folderCell) {
+        var fc = cellInfo.folderCell;
+        var cellLabel = 'Cell ' + (ci + 1);
+        fc.getTerminals().forEach(function (t) {
+          if (t.id !== cellInfo.terminalId) {
+            folderTabLocations[t.id] = cellLabel + ' (tab)';
+          }
+        });
+      }
+    }
 
     Object.keys(this._connections).forEach(function (id) {
       var conn = self._connections[id];
@@ -861,6 +1178,11 @@
           location = 'Cell ' + (i + 1);
           break;
         }
+      }
+
+      // Override location for inactive folder tabs
+      if (location === 'Minimized' && folderTabLocations[id]) {
+        location = folderTabLocations[id];
       }
 
       var displayName = name;
@@ -881,18 +1203,37 @@
   App.prototype._handleTerminalListSelect = function (id) {
     if (!this._engine) return;
 
+    // Clear bell indicator on selection
+    if (this._terminalList) this._terminalList.clearBell(id);
+
     // Close sidebar on mobile so user sees the terminal
     if (this._isMobile() && this._closeSidebar) {
       this._closeSidebar();
     }
 
-    // Check if terminal is in a grid cell
+    // Check if terminal is active in a grid cell
     for (var i = 0; i < this._engine._cells.length; i++) {
       var cell = this._engine._cells[i];
       var info = this._engine._cellMap.get(cell);
       if (info && info.terminalId === id) {
         this._highlightCell(cell);
         return;
+      }
+    }
+
+    // Check if terminal is an inactive tab in a folder cell
+    for (var fi = 0; fi < this._engine._cells.length; fi++) {
+      var fcell = this._engine._cells[fi];
+      var finfo = this._engine._cellMap.get(fcell);
+      if (finfo && finfo.folderCell) {
+        var tabs = finfo.folderCell.getTerminals();
+        for (var ti = 0; ti < tabs.length; ti++) {
+          if (tabs[ti].id === id) {
+            this._engine._switchFolderTab(fcell, id);
+            this._highlightCell(fcell);
+            return;
+          }
+        }
       }
     }
 
@@ -922,6 +1263,71 @@
     }, 1500);
   };
 
+  // --- Folder Cells ---
+
+  App.prototype._openFolderInCell = function (folderId, cell) {
+    if (!this._engine || !ns.FolderCell) return;
+
+    // Find all terminals in this folder
+    var self = this;
+    var entries = [];
+    Object.keys(this._connections).forEach(function (id) {
+      if (self._sessionFolders[id] === folderId) {
+        var conn = self._connections[id];
+        if (!conn || conn.type === 'editor') return;
+        entries.push({ id: id, name: conn.config.name || id, connection: conn });
+      }
+    });
+
+    if (entries.length === 0) return; // no-op for empty folder
+
+    // Find folder name
+    var folderName = folderId;
+    for (var fi = 0; fi < this._folders.length; fi++) {
+      if (this._folders[fi].id === folderId) {
+        folderName = this._folders[fi].name;
+        break;
+      }
+    }
+
+    // Move terminals from other grid cells to minimized before gathering
+    entries.forEach(function (e) {
+      for (var ci = 0; ci < self._engine._cells.length; ci++) {
+        var ci_cell = self._engine._cells[ci];
+        var ci_info = self._engine._cellMap.get(ci_cell);
+        if (ci_info && ci_info.terminalId === e.id && ci_cell !== cell) {
+          e.connection.detach();
+          self._engine._addToMinimized(e.id, e.connection);
+          self._engine._clearCell(ci_cell);
+          break;
+        }
+      }
+    });
+
+    var folderData = null;
+    for (var fdi = 0; fdi < this._folders.length; fdi++) {
+      if (this._folders[fdi].id === folderId) { folderData = this._folders[fdi]; break; }
+    }
+    var folderColors = folderData ? {
+      headerBg: folderData.headerBg || null,
+      headerColor: folderData.headerColor || null,
+      headerHighlight: folderData.headerHighlight || null
+    } : {};
+    var fc = new ns.FolderCell(folderId, folderName, entries, folderColors);
+    this._folderCells[folderId] = fc;
+    this._engine.assignFolder(cell, fc);
+    this._syncTerminalList();
+  };
+
+  App.prototype._findFirstEmptyCell = function () {
+    if (!this._engine) return null;
+    for (var i = 0; i < this._engine._cells.length; i++) {
+      var info = this._engine._cellMap.get(this._engine._cells[i]);
+      if (info && !info.connection) return this._engine._cells[i];
+    }
+    return null;
+  };
+
   // --- Today Tasks ---
 
   App.prototype._initTodayTasks = function () {
@@ -945,6 +1351,10 @@
     this._fileTree = new ns.FileTree(container, {
       onFileClick: function (filePath, fileName) {
         self._openFileInEditor(filePath, fileName);
+      },
+      onOpenTerminal: function (dirPath) {
+        var name = dirPath ? dirPath.split('/').filter(Boolean).pop() : 'workspace';
+        self._sendCreateTerminal(name || 'workspace', null, null, null, null, dirPath || null);
       }
     });
     this._fileTree.init();
@@ -963,8 +1373,94 @@
     }
   };
 
+  // --- Claude File Tree ---
+
+  App.prototype._initClaudeFileTree = function () {
+    var self = this;
+    var container = document.getElementById('claude-file-tree');
+    if (!container || !ns.FileTree) return;
+
+    this._claudeFileTree = new ns.FileTree(container, {
+      apiBase: '/api/claude-files',
+      onFileClick: function (filePath, fileName) {
+        self._openFileInEditor(filePath, fileName);
+      },
+      onOpenTerminal: function (dirPath) {
+        var name = dirPath ? dirPath.split('/').filter(Boolean).pop() : '.claude';
+        var claudeRoot = (self._config && self._config.claudeRoot) || '';
+        var absCwd = claudeRoot && dirPath ? claudeRoot + '/' + dirPath : claudeRoot || null;
+        self._sendCreateTerminal(name || '.claude', null, null, null, null, absCwd);
+      }
+    });
+    this._claudeFileTree.init();
+
+    var refreshBtn = document.getElementById('claude-file-tree-refresh-btn');
+    if (refreshBtn) {
+      refreshBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        refreshBtn.classList.add('ft-refreshing');
+        self._claudeFileTree.refresh().then(function () {
+          refreshBtn.classList.remove('ft-refreshing');
+        }).catch(function () {
+          refreshBtn.classList.remove('ft-refreshing');
+        });
+      });
+    }
+  };
+
+  // --- Opencode File Tree ---
+
+  App.prototype._initOpencodeFileTree = function () {
+    var self = this;
+    var container = document.getElementById('opencode-file-tree');
+    if (!container || !ns.FileTree) return;
+
+    this._opencodeFileTree = new ns.FileTree(container, {
+      apiBase: '/api/opencode-files',
+      onFileClick: function (filePath, fileName) {
+        self._openFileInEditor(filePath, fileName);
+      },
+      onOpenTerminal: function (dirPath) {
+        var name = dirPath ? dirPath.split('/').filter(Boolean).pop() : 'opencode';
+        var opencodeRoot = (self._config && self._config.opencodeRoot) || '';
+        var absCwd = opencodeRoot && dirPath ? opencodeRoot + '/' + dirPath : opencodeRoot || null;
+        self._sendCreateTerminal(name || 'opencode', null, null, null, null, absCwd);
+      }
+    });
+    this._opencodeFileTree.init();
+
+    var refreshBtn = document.getElementById('opencode-file-tree-refresh-btn');
+    if (refreshBtn) {
+      refreshBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        refreshBtn.classList.add('ft-refreshing');
+        self._opencodeFileTree.refresh().then(function () {
+          refreshBtn.classList.remove('ft-refreshing');
+        }).catch(function () {
+          refreshBtn.classList.remove('ft-refreshing');
+        });
+      });
+    }
+  };
+
   App.prototype._isMobile = function () {
     return window.matchMedia && window.matchMedia('(max-width: 767px)').matches;
+  };
+
+  App.prototype._suppressMobileContextMenus = function () {
+    var mq = window.matchMedia && window.matchMedia('(max-width: 767px)');
+    if (!mq) return;
+    function handler(e) { e.preventDefault(); }
+    function apply(matches) {
+      document.removeEventListener('contextmenu', handler);
+      if (matches) document.addEventListener('contextmenu', handler);
+    }
+    apply(mq.matches);
+    if (mq.addEventListener) {
+      mq.addEventListener('change', function (e) { apply(e.matches); });
+    } else if (mq.addListener) {
+      mq.addListener(function (e) { apply(e.matches); });
+    }
   };
 
   App.prototype._wireSidebarToggle = function () {
@@ -1067,13 +1563,63 @@
     // Reject paths with shell metacharacters or control characters to prevent command injection
     if (/[;|&`$(){}[\]!#~\n\r\0]/.test(filePath)) return;
 
-    // Open text files (including .md) in the CodeMirror editor
+    // Open .md files in the dedicated markdown editor
+    if (fileName.toLowerCase().endsWith('.md')) {
+      this._openFileAsNote(filePath);
+      return;
+    }
+
+    // Open other text files in the CodeMirror editor
     if (ns.isTextFile && ns.isTextFile(fileName)) {
       this._openFileAsEditor(filePath);
       return;
     }
 
     this._sendCreateTerminal(fileName, 'vi /workspace/' + filePath);
+  };
+
+  App.prototype._openFileAsNote = function (filePath) {
+    var self = this;
+    var absPath = '/workspace/' + filePath;
+
+    // Re-focus if already open
+    var existingId = null;
+    Object.keys(this._connections).forEach(function (id) {
+      var conn = self._connections[id];
+      if (conn.type === 'note' && conn.config && conn.config.file === absPath) {
+        existingId = id;
+      }
+    });
+    if (existingId) {
+      this._handleTerminalListSelect(existingId);
+      return;
+    }
+
+    fetch('/api/notes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filePath: filePath }),
+    })
+      .then(function (res) {
+        if (!res.ok) throw new Error('Server returned ' + res.status);
+        return res.json();
+      })
+      .then(function (note) {
+        if (!note || !note.id) throw new Error('Invalid note response');
+        if (self._connections[note.id]) {
+          self._handleTerminalListSelect(note.id);
+          return;
+        }
+        var panel = new ns.NotePanel(note);
+        panel._onDirtyChange = function () { self._syncTerminalList(); };
+        self._connections[note.id] = panel;
+        self._assignToFirstEmptyCell(note.id, panel);
+        self._updateEmptyState();
+        self._syncTerminalList();
+      })
+      .catch(function (err) {
+        console.error('[app] openFileAsNote failed:', err);
+      });
   };
 
   App.prototype._openFileAsEditor = function (filePath) {
@@ -1314,17 +1860,6 @@
     this._initCmdsPanel();
     this._initSessionsPanel();
 
-    // visualViewport positioning: keeps toolbar above the virtual keyboard
-    if (window.visualViewport) {
-      var reposition = function () {
-        var vv = window.visualViewport;
-        var bottomOffset = window.innerHeight - (vv.offsetTop + vv.height);
-        toolbar.style.bottom = Math.max(0, bottomOffset) + 'px';
-      };
-
-      window.visualViewport.addEventListener('resize', reposition);
-      window.visualViewport.addEventListener('scroll', reposition);
-    }
   };
 
   App.prototype._setToolbarState = function (state) {
@@ -1791,15 +2326,31 @@
     document.addEventListener('click', ensureAudioCtx, { once: true });
     document.addEventListener('keydown', ensureAudioCtx, { once: true });
 
-    // Clear pending-notification pulse when a terminal cell gains focus
+    // Clear pending-notification pulse + bell indicators when a terminal cell gains focus
     document.addEventListener('focusin', function (e) {
       if (!self._engine) return;
       for (var i = 0; i < self._engine._cells.length; i++) {
         var cell = self._engine._cells[i];
-        if (cell.contains(e.target) && cell.classList.contains('cell-task-pending')) {
+        if (!cell.contains(e.target)) continue;
+        if (cell.classList.contains('cell-task-pending')) {
           cell.classList.remove('cell-task-pending');
-          break;
         }
+        // Clear bell indicators and sidebar bells for the now-focused terminal
+        var info = self._engine._cellMap.get(cell);
+        if (info) {
+          var focusedId = info.terminalId;
+          if (focusedId) {
+            // Clear tab bell (folder cells)
+            var tabBell = cell.querySelector('.cell-header-tab[data-terminal-id="' + focusedId + '"] .cell-header-tab-bell');
+            if (tabBell) tabBell.remove();
+            // Clear header name bell (non-folder cells)
+            var nameBell = cell.querySelector('.cell-header-name-bell');
+            if (nameBell) nameBell.remove();
+            // Clear sidebar bell
+            if (self._terminalList) self._terminalList.clearBell(focusedId);
+          }
+        }
+        break;
       }
     });
 
@@ -1843,6 +2394,14 @@
 
     // Visual flash on the terminal's grid cell
     this._flashTerminalCell(terminalId);
+
+    // Show bell indicator in the sidebar terminal list
+    if (this._terminalList) {
+      this._terminalList.showBell(terminalId);
+    }
+
+    // Show bell indicator on the folder tab (if terminal is in a folder cell)
+    this._flashFolderTab(terminalId);
   };
 
   App.prototype._playDing = function () {
@@ -1877,7 +2436,15 @@
     for (var i = 0; i < this._engine._cells.length; i++) {
       var cell = this._engine._cells[i];
       var info = this._engine._cellMap.get(cell);
-      if (info && info.terminalId === terminalId) {
+      if (!info) continue;
+
+      // Direct match (non-folder cell, or active tab in folder cell)
+      var directMatch = info.terminalId === terminalId;
+      // Folder cell containing this terminal as an inactive tab
+      var folderMatch = !directMatch && info.folderCell &&
+        info.folderCell.getTerminals().some(function (t) { return t.id === terminalId; });
+
+      if (directMatch || folderMatch) {
         var isActive = cell.contains(document.activeElement);
 
         // Always do the one-shot flash
@@ -1891,9 +2458,47 @@
         // If the terminal isn't focused, keep the border pulsing until the user activates it
         if (!isActive) {
           cell.classList.add('cell-task-pending');
+
+          // For non-folder cells, add a bell to the cell header name
+          if (directMatch && !info.folderCell) {
+            var nameEl = cell.querySelector('.cell-header-name');
+            if (nameEl && !nameEl.querySelector('.cell-header-name-bell')) {
+              var bell = document.createElement('span');
+              bell.className = 'cell-header-name-bell';
+              bell.textContent = '\uD83D\uDD14'; // 🔔
+              nameEl.appendChild(bell);
+            }
+          }
         }
         break;
       }
+    }
+  };
+
+  App.prototype._flashFolderTab = function (terminalId) {
+    if (!this._engine) return;
+
+    for (var i = 0; i < this._engine._cells.length; i++) {
+      var cell = this._engine._cells[i];
+      var info = this._engine._cellMap.get(cell);
+      if (!info || !info.folderCell) continue;
+
+      var tabs = info.folderCell.getTerminals();
+      var found = false;
+      for (var ti = 0; ti < tabs.length; ti++) {
+        if (tabs[ti].id === terminalId) { found = true; break; }
+      }
+      if (!found) continue;
+
+      // Find the tab button for this terminal and add a bell indicator
+      var tabBtn = cell.querySelector('.cell-header-tab[data-terminal-id="' + terminalId + '"]');
+      if (tabBtn && !tabBtn.querySelector('.cell-header-tab-bell')) {
+        var bell = document.createElement('span');
+        bell.className = 'cell-header-tab-bell';
+        bell.textContent = '\uD83D\uDD14'; // 🔔
+        tabBtn.appendChild(bell);
+      }
+      break;
     }
   };
 

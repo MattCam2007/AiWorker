@@ -4,6 +4,7 @@ services:
     init: true
     network_mode: host
     volumes:
+      - ./home:/home/terminaldeck
       - ./server:/app/server
       - ./client:/app/client
       - ./config:/app/config

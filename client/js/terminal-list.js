@@ -18,8 +18,10 @@
     this.onDeleteFolder = null;          // (id) -> void
     this.onToggleFolder = null;          // (id, collapsed) -> void
     this.onMoveTerminal = null;          // (terminalId, folderId) -> void
-    this.onUpdateFolderColors = null;    // (id, headerBg, headerColor) -> void
+    this.onUpdateFolderColors = null;    // (id, headerBg, headerColor, headerHighlight) -> void
     this.onNewTerminalInFolder = null;   // (folderId) -> void
+    this.onOpenFolderInGrid = null;      // (folderId) -> void
+    this.onEditFolder = null;            // (folderId) -> void
 
     this._activePicker = null;
   }
@@ -125,16 +127,16 @@
     var actions = document.createElement('span');
     actions.className = 'tl-folder-actions';
 
-    // Style button — opens folder color picker
-    var styleBtn = document.createElement('button');
-    styleBtn.className = 'tl-btn tl-btn-folder-style';
-    styleBtn.textContent = '\uD83C\uDFA8'; // 🎨
-    styleBtn.title = 'Set folder color';
-    styleBtn.addEventListener('click', function (e) {
+    // Open in grid button
+    var openGridBtn = document.createElement('button');
+    openGridBtn.className = 'tl-btn tl-btn-folder-open-grid';
+    openGridBtn.textContent = '\u229E'; // ⊞
+    openGridBtn.title = 'Open in grid cell';
+    openGridBtn.addEventListener('click', function (e) {
       e.stopPropagation();
-      self._showFolderColorPicker(folder, colorDot, styleBtn);
+      if (self.onOpenFolderInGrid) self.onOpenFolderInGrid(folder.id);
     });
-    actions.appendChild(styleBtn);
+    actions.appendChild(openGridBtn);
 
     var newTermBtn = document.createElement('button');
     newTermBtn.className = 'tl-btn tl-btn-folder-new-term';
@@ -146,40 +148,15 @@
     });
     actions.appendChild(newTermBtn);
 
-    var addBtn = document.createElement('button');
-    addBtn.className = 'tl-btn tl-btn-folder-add';
-    addBtn.textContent = '\uD83D\uDCC1'; // 📁
-    addBtn.title = 'Add subfolder';
-    addBtn.addEventListener('click', function (e) {
+    var moreBtn = document.createElement('button');
+    moreBtn.className = 'tl-btn tl-btn-folder-more';
+    moreBtn.textContent = '\u22EE'; // ⋮
+    moreBtn.title = 'More options';
+    moreBtn.addEventListener('click', function (e) {
       e.stopPropagation();
-      var name = prompt('Subfolder name:');
-      if (name && name.trim() && self.onCreateFolder) {
-        self.onCreateFolder(name.trim(), folder.id);
-      }
+      self._showFolderContextMenu(folder, nameEl, e.clientX, e.clientY);
     });
-    actions.appendChild(addBtn);
-
-    var renBtn = document.createElement('button');
-    renBtn.className = 'tl-btn tl-btn-folder-ren';
-    renBtn.textContent = '\u270E'; // ✎
-    renBtn.title = 'Rename folder';
-    renBtn.addEventListener('click', function (e) {
-      e.stopPropagation();
-      self._startFolderRename(nameEl, folder);
-    });
-    actions.appendChild(renBtn);
-
-    var delBtn = document.createElement('button');
-    delBtn.className = 'tl-btn tl-btn-folder-del';
-    delBtn.innerHTML = '&times;';
-    delBtn.title = 'Delete folder';
-    delBtn.addEventListener('click', function (e) {
-      e.stopPropagation();
-      if (confirm('Delete folder "' + folder.name + '"? Terminals inside will be ungrouped.')) {
-        if (self.onDeleteFolder) self.onDeleteFolder(folder.id);
-      }
-    });
-    actions.appendChild(delBtn);
+    actions.appendChild(moreBtn);
 
     el.appendChild(actions);
 
@@ -354,136 +331,90 @@
     }, 0);
   };
 
-  TerminalList.prototype._showFolderColorPicker = function (folder, colorDot, anchorEl) {
+  TerminalList.prototype._showFolderContextMenu = function (folder, nameEl, x, y) {
     var self = this;
 
-    // Close existing picker
+    // Dismiss any existing picker/menu
     if (this._activePicker) {
       this._activePicker.remove();
       this._activePicker = null;
     }
 
-    var picker = document.createElement('div');
-    picker.className = 'tl-folder-color-picker';
+    var menu = document.createElement('div');
+    menu.className = 'ep-context-menu tl-folder-ctx-menu';
 
-    var COLORS = [
-      '#1a1a2e', '#16213e', '#0f3460', '#1b1b2f', '#162447',
-      '#1f4068', '#2d4059', '#3a3a5c', '#4a4a6a', '#2c3e50',
-      '#e94560', '#ff6b6b', '#ffa502', '#ffda79', '#33d9b2',
-      '#34ace0', '#706fd3', '#ff5252', '#2ed573', '#1e90ff'
-    ];
-
-    function buildRow(label, currentColor, onPick) {
-      var row = document.createElement('div');
-      row.className = 'tl-fcp-row';
-
-      var lbl = document.createElement('div');
-      lbl.className = 'tl-fcp-label';
-      lbl.textContent = label;
-      row.appendChild(lbl);
-
-      var swatches = document.createElement('div');
-      swatches.className = 'tl-fcp-swatches';
-
-      // "None" swatch
-      var noneSwatch = document.createElement('button');
-      noneSwatch.className = 'tl-fcp-swatch tl-fcp-swatch-none';
-      if (!currentColor) noneSwatch.classList.add('tl-fcp-swatch-active');
-      noneSwatch.title = 'None';
-      noneSwatch.addEventListener('click', function (e) {
+    function addItem(label, danger, action) {
+      var el = document.createElement('div');
+      el.className = 'ep-ctx-item' + (danger ? ' ep-ctx-item--danger' : '');
+      el.innerHTML = '<span class="ep-ctx-item-label">' + label + '</span>';
+      el.addEventListener('click', function (e) {
         e.stopPropagation();
-        swatches.querySelectorAll('.tl-fcp-swatch').forEach(function (s) { s.classList.remove('tl-fcp-swatch-active'); });
-        noneSwatch.classList.add('tl-fcp-swatch-active');
-        onPick(null);
+        dismiss();
+        action();
       });
-      swatches.appendChild(noneSwatch);
-
-      COLORS.forEach(function (color) {
-        var sw = document.createElement('button');
-        sw.className = 'tl-fcp-swatch';
-        sw.style.background = color;
-        if (currentColor === color) sw.classList.add('tl-fcp-swatch-active');
-        sw.title = color;
-        sw.addEventListener('click', function (e) {
-          e.stopPropagation();
-          swatches.querySelectorAll('.tl-fcp-swatch').forEach(function (s) { s.classList.remove('tl-fcp-swatch-active'); });
-          sw.classList.add('tl-fcp-swatch-active');
-          onPick(color);
-        });
-        swatches.appendChild(sw);
-      });
-
-      var native = document.createElement('input');
-      native.type = 'color';
-      native.className = 'tl-fcp-native';
-      native.value = currentColor || '#333333';
-      native.addEventListener('input', function (e) {
-        e.stopPropagation();
-        swatches.querySelectorAll('.tl-fcp-swatch').forEach(function (s) { s.classList.remove('tl-fcp-swatch-active'); });
-        onPick(native.value);
-      });
-      swatches.appendChild(native);
-
-      row.appendChild(swatches);
-      return row;
+      menu.appendChild(el);
     }
 
-    var selectedBg = folder.headerBg || null;
-    var selectedColor = folder.headerColor || null;
+    function addSep() {
+      var d = document.createElement('div');
+      d.className = 'ep-ctx-divider';
+      menu.appendChild(d);
+    }
 
-    picker.appendChild(buildRow('Background', selectedBg, function (c) { selectedBg = c; }));
-    picker.appendChild(buildRow('Text', selectedColor, function (c) { selectedColor = c; }));
-
-    var btnRow = document.createElement('div');
-    btnRow.className = 'tl-fcp-btn-row';
-
-    var cancelBtn = document.createElement('button');
-    cancelBtn.className = 'tl-fcp-cancel';
-    cancelBtn.textContent = 'Cancel';
-    cancelBtn.addEventListener('click', function (e) {
-      e.stopPropagation();
-      picker.remove();
+    function dismiss() {
+      if (menu.parentNode) menu.parentNode.removeChild(menu);
       self._activePicker = null;
+      document.removeEventListener('mousedown', outsideClick, true);
+      document.removeEventListener('keydown', onKey, true);
+    }
+
+    addItem('Folder Settings\u2026', false, function () {
+      if (self.onEditFolder) self.onEditFolder(folder.id);
     });
-    btnRow.appendChild(cancelBtn);
 
-    var saveBtn = document.createElement('button');
-    saveBtn.className = 'tl-fcp-save';
-    saveBtn.textContent = 'Save';
-    saveBtn.addEventListener('click', function (e) {
-      e.stopPropagation();
-      folder.headerBg = selectedBg;
-      folder.headerColor = selectedColor;
-      colorDot.style.background = selectedBg || '';
-      colorDot.style.opacity = selectedBg ? '1' : '0.2';
-      colorDot.title = selectedBg ? 'Folder color: ' + selectedBg : 'No folder color';
-      if (self.onUpdateFolderColors) self.onUpdateFolderColors(folder.id, selectedBg, selectedColor);
-      picker.remove();
-      self._activePicker = null;
-    });
-    btnRow.appendChild(saveBtn);
-    picker.appendChild(btnRow);
+    addSep();
 
-    // Prevent clicks inside from propagating
-    picker.addEventListener('click', function (e) { e.stopPropagation(); });
-
-    // Position near anchor
-    var rect = anchorEl.getBoundingClientRect();
-    picker.style.position = 'fixed';
-    picker.style.top = rect.bottom + 4 + 'px';
-    picker.style.left = rect.left + 'px';
-    document.body.appendChild(picker);
-    this._activePicker = picker;
-
-    var dismiss = function (e) {
-      if (!picker.contains(e.target) && e.target !== anchorEl) {
-        picker.remove();
-        self._activePicker = null;
-        document.removeEventListener('mousedown', dismiss, true);
+    addItem('Add Subfolder', false, function () {
+      var name = prompt('Subfolder name:');
+      if (name && name.trim() && self.onCreateFolder) {
+        self.onCreateFolder(name.trim(), folder.id);
       }
-    };
+    });
+
+    addItem('Rename', false, function () {
+      self._startFolderRename(nameEl, folder);
+    });
+
+    addSep();
+
+    addItem('Delete Folder', true, function () {
+      if (confirm('Delete folder "' + folder.name + '"? Terminals inside will be ungrouped.')) {
+        if (self.onDeleteFolder) self.onDeleteFolder(folder.id);
+      }
+    });
+
+    // Position
+    menu.style.left = x + 'px';
+    menu.style.top = y + 'px';
+    document.body.appendChild(menu);
+    this._activePicker = menu;
+
+    // Clamp to viewport
+    var vw = window.innerWidth;
+    var vh = window.innerHeight;
+    var rect = menu.getBoundingClientRect();
+    if (rect.right > vw) menu.style.left = (x - rect.width) + 'px';
+    if (rect.bottom > vh) menu.style.top = (y - rect.height) + 'px';
+
+    function outsideClick(e) {
+      if (!menu.contains(e.target)) dismiss();
+    }
+    function onKey(e) {
+      if (e.key === 'Escape') dismiss();
+    }
     setTimeout(function () {
-      document.addEventListener('mousedown', dismiss, true);
+      document.addEventListener('mousedown', outsideClick, true);
+      document.addEventListener('keydown', onKey, true);
     }, 0);
   };
 
@@ -528,6 +459,30 @@
       dot.classList.remove('tl-status-active');
       dot.classList.add('tl-status-idle');
     }
+  };
+
+  TerminalList.prototype.showBell = function (id) {
+    var el = this._items.get(id);
+    if (!el) return;
+    // Don't double-add
+    if (el.querySelector('.tl-bell')) return;
+    var bell = document.createElement('span');
+    bell.className = 'tl-bell';
+    bell.textContent = '\uD83D\uDD14'; // 🔔
+    // Insert after the name element
+    var nameEl = el.querySelector('.tl-name');
+    if (nameEl && nameEl.nextSibling) {
+      el.insertBefore(bell, nameEl.nextSibling);
+    } else {
+      el.appendChild(bell);
+    }
+  };
+
+  TerminalList.prototype.clearBell = function (id) {
+    var el = this._items.get(id);
+    if (!el) return;
+    var bell = el.querySelector('.tl-bell');
+    if (bell) bell.remove();
   };
 
   ns.TerminalList = TerminalList;

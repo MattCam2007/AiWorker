@@ -1,7 +1,11 @@
 const { expect } = require('chai');
+const fs = require('fs');
 const http = require('http');
 const { execSync } = require('child_process');
 const { createApp } = require('./index');
+const { DEFAULT_INSTANCE } = require('./sessions');
+
+const TEST_INSTANCES_PATH = '/tmp/terminaldeck-index-test-instances.json';
 
 function cleanupTmuxSessions() {
   try {
@@ -39,12 +43,19 @@ describe('HTTP Server', function () {
 
   beforeEach(async () => {
     cleanupTmuxSessions();
-    app = await createApp({ port: 0, tmuxSocket: 'terminaldeck-test', sessionPrefix: 'terminaldeck-test-' });
+    try { fs.unlinkSync(TEST_INSTANCES_PATH); } catch {}
+    app = await createApp({
+      port: 0,
+      tmuxSocket: 'terminaldeck-test',
+      sessionPrefix: 'terminaldeck-test-',
+      instancesPath: TEST_INSTANCES_PATH
+    });
   });
 
   afterEach(async () => {
     await app.close();
     cleanupTmuxSessions();
+    try { fs.unlinkSync(TEST_INSTANCES_PATH); } catch {}
   });
 
   describe('static file serving', () => {
@@ -132,7 +143,7 @@ describe('HTTP Server', function () {
       const WebSocket = require('ws');
       const token = app.wsServer._serverToken;
       // Create a terminal first, then connect to it
-      app.sessionManager.createTerminal('Test').then((result) => {
+      app.sessionManager.createTerminal(DEFAULT_INSTANCE, 'Test').then((result) => {
         const ws = new WebSocket(`ws://127.0.0.1:${app.port}/ws/terminal/${result.id}?t=${encodeURIComponent(token)}`);
         ws.on('open', () => {
           ws.close();

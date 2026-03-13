@@ -6,6 +6,7 @@ const os = require('os');
 const WebSocket = require('ws');
 const { execSync } = require('child_process');
 const { createApp } = require('../server/index');
+const { DEFAULT_INSTANCE } = require('../server/sessions');
 
 function tmuxAvailable() {
   try {
@@ -125,7 +126,13 @@ describe('Integration Tests', function () {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'terminaldeck-int-'));
     configPath = path.join(tmpDir, 'terminaldeck.json');
     writeConfig(testConfig);
-    app = await createApp({ configPath, port: 0, tmuxSocket: 'terminaldeck-test', sessionPrefix: 'terminaldeck-test-' });
+    app = await createApp({
+      configPath,
+      port: 0,
+      tmuxSocket: 'terminaldeck-test',
+      sessionPrefix: 'terminaldeck-test-',
+      instancesPath: path.join(tmpDir, 'instances.json')
+    });
   });
 
   afterEach(async function () {
@@ -205,7 +212,7 @@ describe('Integration Tests', function () {
 
   describe('Terminal connectivity', () => {
     it('sends a command and receives output', async () => {
-      const result = await app.sessionManager.createTerminal('Shell 1');
+      const result = await app.sessionManager.createTerminal(DEFAULT_INSTANCE, 'Shell 1');
 
       const ws = await connectTerminalWS(app.port, result.id);
       const outputPromise = collectOutput(ws, 2000);
@@ -221,7 +228,7 @@ describe('Integration Tests', function () {
 
   describe('Multi-client', () => {
     it('input from client A is visible to client B', async () => {
-      const result = await app.sessionManager.createTerminal('Shell 1');
+      const result = await app.sessionManager.createTerminal(DEFAULT_INSTANCE, 'Shell 1');
 
       const wsA = await connectTerminalWS(app.port, result.id);
       const wsB = await connectTerminalWS(app.port, result.id);
@@ -240,7 +247,7 @@ describe('Integration Tests', function () {
 
   describe('Session persistence', () => {
     it('tmux session survives WebSocket disconnect and reconnect', async () => {
-      const result = await app.sessionManager.createTerminal('Shell 1');
+      const result = await app.sessionManager.createTerminal(DEFAULT_INSTANCE, 'Shell 1');
 
       const ws1 = await connectTerminalWS(app.port, result.id);
       await new Promise((r) => setTimeout(r, 500));

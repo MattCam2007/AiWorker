@@ -1,0 +1,22 @@
+{
+  "name": "terminaldeck",
+  "version": "1.0.0",
+  "description": "Web-based persistent terminal dashboard powered by tmux",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "test": "mocha --recursive 'server/**/*.test.js' 'client/**/*.test.js' --exit",
+    "test:integration": "mocha 'test/**/*.test.js' --exit --timeout 30000",
+    "test:all": "mocha --recursive 'server/**/*.test.js' 'client/**/*.test.js' 'test/**/*.test.js' --exit --timeout 30000"
+  },
+  "dependencies": {
+    "node-pty": "1.1.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "chai": "^4.5.0",
+    "jsdom": "^28.1.0",
+    "mocha": "^10.8.0",
+    "sinon": "^19.0.0"
+  }
+}

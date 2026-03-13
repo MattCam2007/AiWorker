@@ -1,0 +1,19 @@
+{
+  "folders": [
+    {
+      "id": "2e8c3357-89e3-4c0f-a571-945e0c659721",
+      "name": "AiWorker",
+      "parentId": null,
+      "collapsed": false,
+      "headerBg": null,
+      "headerColor": null,
+      "headerHighlight": null,
+      "startCommand": null
+    }
+  ],
+  "sessionFolders": {
+    "76c78152-e813-479a-b45b-5bdcfa3d8e16": "2e8c3357-89e3-4c0f-a571-945e0c659721",
+    "aad195e0-69ed-4731-ab10-74b9bd9991b7": "2e8c3357-89e3-4c0f-a571-945e0c659721",
+    "e486caee-785a-476a-9221-175bcd05cf43": "2e8c3357-89e3-4c0f-a571-945e0c659721"
+  }
+}

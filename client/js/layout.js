@@ -19,7 +19,7 @@
   function LayoutEngine(gridContainer) {
     this._gridContainer = gridContainer;
     this._cells = [];
-    this._cellMap = new Map(); // cell element -> { connection, terminalId }
+    this._cellMap = new Map(); // cell element -> { connection, terminalId, folderCell? }
     this._minimized = new Map(); // terminalId -> connection
     this._currentGrid = null;
     this._resizeObserver = null;
@@ -28,6 +28,10 @@
     this._onMinimizeTerminal = null;
     this._onUpdateTerminal = null;
     this._onLayoutChange = null;
+    this._onOpenFolderInCell = null; // (cell, folderId) -> void
+    this._onCreateTerminalInFolder = null; // (folderId) -> void
+    this._onEditFolder = null; // (folderId) -> void
+    this._folders = []; // folder data for popover
     this._supersizeState = null;
     this._supersizeTerminalId = null;
     this._colProportions = null;
@@ -118,9 +122,23 @@
 
     var info = this._cellMap.get(cell);
     if (info) {
+      // If this is a folder cell, move all folder terminals to _minimized
+      if (info.folderCell) {
+        var self = this;
+        info.folderCell.getTerminals().forEach(function (t) {
+          if (t.connection) {
+            if (t.id === info.terminalId) {
+              t.connection.detach();
+            }
+            self._addToMinimized(t.id, t.connection);
+          }
+        });
+      }
       info.connection = null;
       info.terminalId = null;
+      info.folderCell = null;
     }
+    cell.classList.remove('cell-folder-mode');
     cell.classList.add('cell-empty');
     var header = cell.querySelector('.cell-header');
     if (header) {
@@ -128,6 +146,9 @@
       header.style.display = 'none';
       header.style.background = '';
       header.style.color = '';
+      header.style.removeProperty('--fc-bg');
+      header.style.removeProperty('--fc-text');
+      header.style.removeProperty('--fc-hl');
     }
     var mount = cell.querySelector('.cell-terminal');
     if (mount) mount.innerHTML = '';
@@ -191,8 +212,18 @@
       if (!reused.has(cell)) {
         var info = self._cellMap.get(cell);
         if (info && info.connection) {
-          info.connection.detach();
-          self._addToMinimized(info.terminalId, info.connection);
+          if (info.folderCell) {
+            // Move all folder terminals to minimized
+            info.folderCell.getTerminals().forEach(function (t) {
+              if (t.connection) {
+                if (t.id === info.terminalId) t.connection.detach();
+                self._addToMinimized(t.id, t.connection);
+              }
+            });
+          } else {
+            info.connection.detach();
+            self._addToMinimized(info.terminalId, info.connection);
+          }
         }
         self._cellMap.delete(cell);
         cell.remove();
@@ -226,7 +257,19 @@
 
     var nameSpan = document.createElement('span');
     nameSpan.className = 'cell-header-name';
-    nameSpan.textContent = name;
+    if (connection.type === 'editor' && ns.getFileIcon) {
+      nameSpan.classList.add('cell-header-name--with-icon');
+      var iconSpan = document.createElement('span');
+      iconSpan.className = 'cell-header-file-icon';
+      iconSpan.innerHTML = ns.getFileIcon(connection.config.name || '', 'file', false);
+      nameSpan.appendChild(iconSpan);
+      var textSpan = document.createElement('span');
+      textSpan.className = 'cell-header-name-text';
+      textSpan.textContent = name;
+      nameSpan.appendChild(textSpan);
+    } else {
+      nameSpan.textContent = name;
+    }
     header.appendChild(nameSpan);
 
     var spacer = document.createElement('span');
@@ -328,6 +371,390 @@
     if (this._onLayoutChange) this._onLayoutChange();
   };
 
+  // --- Folder Cell ---
+
+  LayoutEngine.prototype._makeFolderCallbacks = function (cell, folderCell) {
+    var self = this;
+    return {
+      onTabClick: function (terminalId) {
+        self._switchFolderTab(cell, terminalId);
+      },
+      onMore: function (x, y) {
+        self._showFolderMoreMenu(x, y, cell, folderCell);
+      },
+      onRefresh: function () {
+        var conn = folderCell.getActiveConnection();
+        if (conn && conn.refresh) conn.refresh();
+      },
+      onSupersize: function () {
+        if (self._supersizeState) {
+          self.exitSupersize();
+        } else {
+          var activeId = folderCell.getActiveTerminalId();
+          if (activeId) self.supersize(activeId);
+        }
+      },
+      isSupersized: function () {
+        return !!self._supersizeState;
+      },
+      onMinimize: function () {
+        self.minimizeFolderCell(cell, folderCell);
+      },
+      onClose: function () {
+        var activeId = folderCell.getActiveTerminalId();
+        if (activeId && self._onCloseTerminal) self._onCloseTerminal(activeId);
+      },
+      onTabContextMenu: function (terminalId, x, y, tabEl) {
+        self._showTabContextMenu(terminalId, x, y, tabEl, cell, folderCell);
+      }
+    };
+  };
+
+  LayoutEngine.prototype._showFolderMoreMenu = function (x, y, cell, folderCell) {
+    var self = this;
+
+    // Dismiss any existing menu
+    var existing = document.querySelector('.td-folder-more-menu');
+    if (existing) existing.remove();
+
+    var menu = document.createElement('div');
+    menu.className = 'ep-context-menu td-folder-more-menu';
+
+    function addItem(label, action) {
+      var el = document.createElement('div');
+      el.className = 'ep-ctx-item';
+      el.innerHTML = '<span class="ep-ctx-item-label">' + label + '</span>';
+      el.addEventListener('click', function (e) {
+        e.stopPropagation();
+        dismiss();
+        action();
+      });
+      menu.appendChild(el);
+    }
+
+    function addSep() {
+      var d = document.createElement('div');
+      d.className = 'ep-ctx-divider';
+      menu.appendChild(d);
+    }
+
+    function dismiss() {
+      if (menu.parentNode) menu.parentNode.removeChild(menu);
+      document.removeEventListener('mousedown', outsideClick, true);
+      document.removeEventListener('keydown', onKey, true);
+    }
+
+    addItem('Folder Settings', function () {
+      if (self._onEditFolder) self._onEditFolder(folderCell.getFolderId());
+    });
+
+    addItem('Refresh Display', function () {
+      var conn = folderCell.getActiveConnection();
+      if (conn && conn.refresh) conn.refresh();
+    });
+
+    addItem('New Terminal Here', function () {
+      if (self._onCreateTerminalInFolder) self._onCreateTerminalInFolder(folderCell.getFolderId());
+    });
+
+    addSep();
+
+    if (self._supersizeState) {
+      addItem('Exit Supersize', function () {
+        self.exitSupersize();
+      });
+    }
+
+    // Position
+    menu.style.left = x + 'px';
+    menu.style.top = y + 'px';
+    document.body.appendChild(menu);
+
+    // Clamp to viewport
+    var vw = window.innerWidth;
+    var vh = window.innerHeight;
+    var rect = menu.getBoundingClientRect();
+    if (rect.right > vw) menu.style.left = (x - rect.width) + 'px';
+    if (rect.bottom > vh) menu.style.top = (y - rect.height) + 'px';
+
+    function outsideClick(e) {
+      if (!menu.contains(e.target)) dismiss();
+    }
+    function onKey(e) {
+      if (e.key === 'Escape') dismiss();
+    }
+    setTimeout(function () {
+      document.addEventListener('mousedown', outsideClick, true);
+      document.addEventListener('keydown', onKey, true);
+    }, 0);
+  };
+
+  LayoutEngine.prototype._showTabContextMenu = function (terminalId, x, y, tabEl, cell, folderCell) {
+    var self = this;
+
+    // Dismiss any existing tab context menu
+    var existing = document.querySelector('.td-tab-ctx-menu');
+    if (existing) existing.remove();
+
+    var menu = document.createElement('div');
+    menu.className = 'ep-context-menu td-tab-ctx-menu';
+
+    function addItem(label, danger, action) {
+      var el = document.createElement('div');
+      el.className = 'ep-ctx-item' + (danger ? ' ep-ctx-item--danger' : '');
+      el.innerHTML = '<span class="ep-ctx-item-label">' + label + '</span>';
+      el.addEventListener('click', function (e) {
+        e.stopPropagation();
+        dismiss();
+        action();
+      });
+      menu.appendChild(el);
+    }
+
+    function addSep() {
+      var d = document.createElement('div');
+      d.className = 'ep-ctx-divider';
+      menu.appendChild(d);
+    }
+
+    function dismiss() {
+      if (menu.parentNode) menu.parentNode.removeChild(menu);
+      document.removeEventListener('mousedown', outsideClick, true);
+      document.removeEventListener('keydown', onKey, true);
+    }
+
+    addItem('Rename', false, function () {
+      self._showTabRenamePopover(terminalId, tabEl, cell, folderCell);
+    });
+
+    addItem('New Terminal Here', false, function () {
+      if (self._onCreateTerminalInFolder) self._onCreateTerminalInFolder(folderCell.getFolderId());
+    });
+
+    addSep();
+
+    var terminals = folderCell.getTerminals();
+
+    addItem('Close Tab', true, function () {
+      if (self._onCloseTerminal) self._onCloseTerminal(terminalId);
+    });
+
+    if (terminals.length > 1) {
+      addItem('Close Others', true, function () {
+        // snapshot before any mutations
+        var othersToClose = terminals.filter(function (t) { return t.id !== terminalId; });
+        othersToClose.forEach(function (t) {
+          if (self._onCloseTerminal) self._onCloseTerminal(t.id);
+        });
+      });
+    }
+
+    // Position — set initial position before appending so getBoundingClientRect works
+    menu.style.left = x + 'px';
+    menu.style.top = y + 'px';
+    document.body.appendChild(menu);
+
+    // Clamp to viewport after measuring actual size
+    var vw = window.innerWidth;
+    var vh = window.innerHeight;
+    var rect = menu.getBoundingClientRect();
+    if (rect.right > vw) menu.style.left = (x - rect.width) + 'px';
+    if (rect.bottom > vh) menu.style.top = (y - rect.height) + 'px';
+
+    function outsideClick(e) {
+      if (!menu.contains(e.target)) dismiss();
+    }
+    function onKey(e) {
+      if (e.key === 'Escape') dismiss();
+    }
+    setTimeout(function () {
+      document.addEventListener('mousedown', outsideClick, true);
+      document.addEventListener('keydown', onKey, true);
+    }, 0);
+  };
+
+  LayoutEngine.prototype._showTabRenamePopover = function (terminalId, tabEl, cell, folderCell) {
+    var self = this;
+
+    var existing = document.querySelector('.td-tab-rename-pop');
+    if (existing) existing.remove();
+
+    var terminals = folderCell.getTerminals();
+    var currentName = '';
+    var currentConn = null;
+    for (var i = 0; i < terminals.length; i++) {
+      if (terminals[i].id === terminalId) {
+        currentName = terminals[i].name;
+        currentConn = terminals[i].connection;
+        break;
+      }
+    }
+
+    var pop = document.createElement('div');
+    pop.className = 'td-tab-rename-pop';
+
+    var input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'td-tab-rename-input';
+    input.value = currentName;
+    pop.appendChild(input);
+
+    var btnRow = document.createElement('div');
+    btnRow.className = 'td-tab-rename-btns';
+
+    function dismiss() {
+      if (pop.parentNode) pop.parentNode.removeChild(pop);
+      document.removeEventListener('mousedown', outsideClick, true);
+    }
+
+    function save() {
+      var newName = input.value.trim();
+      if (newName && newName !== currentName) {
+        folderCell.updateTerminalName(terminalId, newName);
+        // Update tab label immediately
+        var tabsEl = cell.querySelector('.cell-header-tabs');
+        if (tabsEl) {
+          var tabs = tabsEl.querySelectorAll('.cell-header-tab');
+          tabs.forEach(function (t) {
+            if (t.dataset.terminalId === terminalId) t.textContent = newName;
+          });
+        }
+        var existingBg = currentConn && currentConn.config ? currentConn.config.headerBg : undefined;
+        var existingColor = currentConn && currentConn.config ? currentConn.config.headerColor : undefined;
+        if (self._onUpdateTerminal) self._onUpdateTerminal(terminalId, newName, existingBg, existingColor);
+      }
+      dismiss();
+    }
+
+    var saveBtn = document.createElement('button');
+    saveBtn.textContent = 'Rename';
+    saveBtn.className = 'td-tab-rename-save';
+    saveBtn.addEventListener('click', save);
+    btnRow.appendChild(saveBtn);
+
+    var cancelBtn = document.createElement('button');
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.className = 'td-tab-rename-cancel';
+    cancelBtn.addEventListener('click', dismiss);
+    btnRow.appendChild(cancelBtn);
+
+    pop.appendChild(btnRow);
+    document.body.appendChild(pop);
+
+    // Position below the tab
+    var tabRect = tabEl.getBoundingClientRect();
+    pop.style.left = tabRect.left + 'px';
+    pop.style.top = (tabRect.bottom + 4) + 'px';
+    var popRect = pop.getBoundingClientRect();
+    if (popRect.right > window.innerWidth) {
+      pop.style.left = (window.innerWidth - popRect.width - 8) + 'px';
+    }
+
+    input.select();
+    input.focus();
+
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); save(); }
+      if (e.key === 'Escape') dismiss();
+    });
+
+    function outsideClick(e) {
+      if (!pop.contains(e.target)) dismiss();
+    }
+    setTimeout(function () {
+      document.addEventListener('mousedown', outsideClick, true);
+    }, 0);
+  };
+
+  LayoutEngine.prototype.assignFolder = function (cell, folderCell) {
+    var self = this;
+    var mount = cell.querySelector('.cell-terminal');
+    var header = cell.querySelector('.cell-header');
+
+    cell.classList.remove('cell-empty');
+    cell.classList.add('cell-folder-mode');
+
+    var activeId = folderCell.getActiveTerminalId();
+    var activeConn = folderCell.getActiveConnection();
+
+    this._cellMap.set(cell, {
+      connection: activeConn,
+      terminalId: activeId,
+      folderCell: folderCell
+    });
+
+    // Remove all folder terminals from minimized
+    folderCell.getTerminals().forEach(function (t) {
+      self._removeFromMinimized(t.id);
+    });
+
+    folderCell.renderHeader(header, this._makeFolderCallbacks(cell, folderCell));
+
+    if (activeConn) {
+      activeConn.attach(mount);
+      if (typeof requestAnimationFrame !== 'undefined') {
+        requestAnimationFrame(function () {
+          requestAnimationFrame(function () {
+            activeConn.refit();
+            activeConn.focus();
+          });
+        });
+      }
+    }
+
+    if (this._onLayoutChange) this._onLayoutChange();
+  };
+
+  LayoutEngine.prototype._switchFolderTab = function (cell, terminalId) {
+    var info = this._cellMap.get(cell);
+    if (!info || !info.folderCell) return;
+    var folderCell = info.folderCell;
+
+    var result = folderCell.setActiveTab(terminalId);
+    if (!result) return; // already active
+
+    var mount = cell.querySelector('.cell-terminal');
+    var header = cell.querySelector('.cell-header');
+
+    // Detach old connection
+    if (result.prev.conn) {
+      result.prev.conn.detach();
+    }
+
+    // Update cellMap
+    this._cellMap.set(cell, {
+      connection: result.next.conn,
+      terminalId: result.next.id,
+      folderCell: folderCell
+    });
+
+    // Attach new connection
+    if (result.next.conn) {
+      result.next.conn.attach(mount);
+    }
+
+    // Update active tab styling
+    folderCell.updateActiveTab(header);
+
+    // Clear bell indicator on the tab that was just activated
+    var tabBell = header.querySelector('.cell-header-tab[data-terminal-id="' + terminalId + '"] .cell-header-tab-bell');
+    if (tabBell) tabBell.remove();
+
+    var self = this;
+    if (typeof requestAnimationFrame !== 'undefined') {
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () {
+          if (result.next.conn) {
+            result.next.conn.refit();
+            result.next.conn.focus();
+          }
+        });
+      });
+    }
+
+    if (this._onLayoutChange) this._onLayoutChange();
+  };
+
   // --- Minimized Terminals ---
 
   LayoutEngine.prototype.minimizeTerminal = function (terminalId) {
@@ -335,10 +762,40 @@
     var found = false;
     this._cells.forEach(function (cell) {
       var info = self._cellMap.get(cell);
-      if (info && info.terminalId === terminalId) {
+      if (!info || info.terminalId !== terminalId) return;
+
+      if (info.folderCell) {
+        // Active tab in a folder cell — remove from folder and switch or clear
+        var folderCell = info.folderCell;
         var conn = info.connection;
         conn.detach();
-        // Clear the cell
+        self._addToMinimized(terminalId, conn);
+        var removeResult = folderCell.removeTerminal(terminalId);
+
+        if (removeResult.newActiveId) {
+          var newConn = folderCell.getActiveConnection();
+          var mount = cell.querySelector('.cell-terminal');
+          var header = cell.querySelector('.cell-header');
+          self._cellMap.set(cell, {
+            connection: newConn,
+            terminalId: removeResult.newActiveId,
+            folderCell: folderCell
+          });
+          if (newConn) newConn.attach(mount);
+          folderCell.renderHeader(header, self._makeFolderCallbacks(cell, folderCell));
+          if (typeof requestAnimationFrame !== 'undefined') {
+            requestAnimationFrame(function () {
+              requestAnimationFrame(function () {
+                if (newConn) { newConn.refit(); newConn.focus(); }
+              });
+            });
+          }
+        } else {
+          self._clearCell(cell);
+        }
+      } else {
+        var conn = info.connection;
+        conn.detach();
         info.connection = null;
         info.terminalId = null;
         cell.classList.add('cell-empty');
@@ -350,14 +807,20 @@
         var mount = cell.querySelector('.cell-terminal');
         if (mount) mount.innerHTML = '';
         self._addToMinimized(terminalId, conn);
-        found = true;
       }
+      found = true;
     });
     if (found) {
       this.refitAll();
       if (this._onMinimizeTerminal) this._onMinimizeTerminal(terminalId);
       if (this._onLayoutChange) this._onLayoutChange();
     }
+  };
+
+  LayoutEngine.prototype.minimizeFolderCell = function (cell, folderCell) {
+    this._clearCell(cell);
+    this.refitAll();
+    if (this._onLayoutChange) this._onLayoutChange();
   };
 
   LayoutEngine.prototype._addToMinimized = function (terminalId, connection) {
@@ -390,14 +853,15 @@
   };
 
   LayoutEngine.prototype._showCellPopover = function (cell) {
-    // Create a simple popover listing minimized terminals
+    // Create a simple popover listing minimized terminals and available folders
     var existing = cell.querySelector('.cell-popover');
     if (existing) {
       existing.remove();
       return;
     }
 
-    if (this._minimized.size === 0) return;
+    var hasFolders = this._folders && this._folders.length > 0;
+    if (this._minimized.size === 0 && !hasFolders) return;
 
     var popover = document.createElement('div');
     popover.className = 'cell-popover';
@@ -416,6 +880,29 @@
       });
       popover.appendChild(btn);
     });
+
+    // Folders section
+    if (hasFolders) {
+      var folderSection = document.createElement('div');
+      folderSection.className = 'popover-section';
+      var folderLabel = document.createElement('div');
+      folderLabel.className = 'popover-section-label';
+      folderLabel.textContent = 'Folders';
+      folderSection.appendChild(folderLabel);
+
+      this._folders.forEach(function (folder) {
+        var btn = document.createElement('button');
+        btn.className = 'popover-item popover-folder-item';
+        btn.textContent = '\uD83D\uDCC1 ' + folder.name;
+        btn.addEventListener('click', function (e) {
+          e.stopPropagation();
+          popover.remove();
+          if (self._onOpenFolderInCell) self._onOpenFolderInCell(cell, folder.id);
+        });
+        folderSection.appendChild(btn);
+      });
+      popover.appendChild(folderSection);
+    }
 
     cell.appendChild(popover);
 
@@ -642,6 +1129,20 @@
 
   // --- Header ---
 
+  LayoutEngine.prototype.updateFolderColors = function (folderId, bg, color, highlight) {
+    var self = this;
+    this._cells.forEach(function (cell) {
+      var info = self._cellMap.get(cell);
+      if (info && info.folderCell && info.folderCell.getFolderId() === folderId) {
+        var header = cell.querySelector('.cell-header');
+        if (header) {
+          info.folderCell.setColors({ headerBg: bg, headerColor: color, headerHighlight: highlight });
+          info.folderCell.applyColors(header);
+        }
+      }
+    });
+  };
+
   LayoutEngine.prototype.updateHeader = function (terminalId, name, headerBg, headerColor) {
     var self = this;
     // Update grid cell header
@@ -670,10 +1171,25 @@
     // Snapshot current layout
     var assignments = [];
     var self = this;
+    var sourceFolderCell = null;
     this._cells.forEach(function (cell, index) {
       var info = self._cellMap.get(cell);
       if (info && info.connection) {
-        assignments.push({ cellIndex: index, terminalId: info.terminalId });
+        assignments.push({
+          cellIndex: index,
+          terminalId: info.terminalId,
+          folderCell: info.folderCell || null
+        });
+        // Check if the supersized terminal belongs to a folder cell
+        if (info.folderCell) {
+          var terminals = info.folderCell.getTerminals();
+          for (var i = 0; i < terminals.length; i++) {
+            if (terminals[i].id === terminalId) {
+              sourceFolderCell = info.folderCell;
+              break;
+            }
+          }
+        }
       }
     });
 
@@ -684,6 +1200,7 @@
       rowProportions: this._rowProportions ? this._rowProportions.slice() : null
     };
     this._supersizeTerminalId = terminalId;
+    this._supersizeFolderCell = sourceFolderCell;
 
     // Find the target connection before setGrid modifies state
     var targetConn = null;
@@ -693,6 +1210,16 @@
         targetConn = info.connection;
       }
     });
+    if (!targetConn && sourceFolderCell) {
+      // Terminal might be an inactive tab in the folder cell
+      var terminals = sourceFolderCell.getTerminals();
+      for (var i = 0; i < terminals.length; i++) {
+        if (terminals[i].id === terminalId && terminals[i].connection) {
+          targetConn = terminals[i].connection;
+          break;
+        }
+      }
+    }
     if (!targetConn) {
       targetConn = this._minimized.get(terminalId) || null;
     }
@@ -700,6 +1227,7 @@
     if (!targetConn) {
       this._supersizeState = null;
       this._supersizeTerminalId = null;
+      this._supersizeFolderCell = null;
       return;
     }
 
@@ -708,6 +1236,26 @@
 
     // Add supersized class
     this._gridContainer.classList.add('grid-container-supersized');
+
+    // If supersizing a folder cell, assign the whole folder to cell 0
+    if (sourceFolderCell) {
+      // Make sure the requested terminal is the active tab
+      sourceFolderCell.setActiveTab(terminalId);
+
+      // Clear cell 0 if it has something else
+      var cell0Info = this._cellMap.get(this._cells[0]);
+      if (cell0Info && cell0Info.connection) {
+        cell0Info.connection.detach();
+        // Only minimize if it's not part of the folder we're about to assign
+        if (!cell0Info.folderCell || cell0Info.folderCell !== sourceFolderCell) {
+          this._addToMinimized(cell0Info.terminalId, cell0Info.connection);
+        }
+        this._clearCell(this._cells[0]);
+      }
+
+      this.assignFolder(this._cells[0], sourceFolderCell);
+      return;
+    }
 
     // If target is already in cell 0, rebuild header to show "Exit Supersize"
     var cell0Info = this._cellMap.get(this._cells[0]);
@@ -733,8 +1281,10 @@
 
     var saved = this._supersizeState;
     var supersizedId = this._supersizeTerminalId;
+    var supersizedFolder = this._supersizeFolderCell;
     this._supersizeState = null;
     this._supersizeTerminalId = null;
+    this._supersizeFolderCell = null;
 
     // Remove supersized class
     this._gridContainer.classList.remove('grid-container-supersized');
@@ -745,15 +1295,26 @@
     // connected and the terminal state intact (critical for TUI apps like
     // Claude Code that don't recover well from a full reconnect).
     var cell0Info = this._cellMap.get(this._cells[0]);
-    var supersizedConn = (cell0Info && cell0Info.terminalId === supersizedId)
-      ? cell0Info.connection : null;
+
+    // For folder cells, match by folder cell reference (the active terminal
+    // may have changed via tab switching while supersized)
+    var supersizedConn = null;
+    if (supersizedFolder && cell0Info && cell0Info.folderCell === supersizedFolder) {
+      supersizedConn = cell0Info.connection;
+    } else if (cell0Info && cell0Info.terminalId === supersizedId) {
+      supersizedConn = cell0Info.connection;
+    }
 
     // Find original cell index (-1 means terminal was minimized, not in grid)
     var supersizedOrigIndex = -1;
     if (supersizedConn) {
       for (var i = 0; i < saved.assignments.length; i++) {
-        if (saved.assignments[i].terminalId === supersizedId) {
-          supersizedOrigIndex = saved.assignments[i].cellIndex;
+        var entry = saved.assignments[i];
+        if (supersizedFolder && entry.folderCell === supersizedFolder) {
+          supersizedOrigIndex = entry.cellIndex;
+          break;
+        } else if (!supersizedFolder && entry.terminalId === supersizedId) {
+          supersizedOrigIndex = entry.cellIndex;
           break;
         }
       }
@@ -768,7 +1329,21 @@
       // so the supersized terminal survives the grid transition intact.
       this.setGrid(saved.grid);
 
-      if (supersizedOrigIndex !== 0 && supersizedOrigIndex < this._cells.length) {
+      if (supersizedFolder) {
+        // Folder cell supersized — move entire folder back to original cell
+        if (supersizedOrigIndex !== 0 && supersizedOrigIndex < this._cells.length) {
+          var activeConn = supersizedFolder.getActiveConnection();
+          if (activeConn && activeConn.moveTo) {
+            var targetMount = this._cells[supersizedOrigIndex].querySelector('.cell-terminal');
+            activeConn.moveTo(targetMount);
+          }
+          this._clearCell(this._cells[0]);
+          this.assignFolder(this._cells[supersizedOrigIndex], supersizedFolder);
+        } else {
+          // Was originally in cell 0 — just re-render to swap supersize button
+          this.assignFolder(this._cells[0], supersizedFolder);
+        }
+      } else if (supersizedOrigIndex !== 0 && supersizedOrigIndex < this._cells.length) {
         // Move xterm DOM from cell 0 to the terminal's original cell
         var targetMount = this._cells[supersizedOrigIndex].querySelector('.cell-terminal');
         supersizedConn.moveTo(targetMount);
@@ -788,12 +1363,18 @@
 
       // Restore other terminals from minimized to their original cells
       saved.assignments.forEach(function (entry) {
-        if (entry.terminalId === supersizedId) return; // already handled
+        // Skip the supersized entry (already handled above)
+        if (supersizedFolder && entry.folderCell === supersizedFolder) return;
+        if (!supersizedFolder && entry.terminalId === supersizedId) return;
         if (entry.cellIndex >= self._cells.length) return;
-        var conn = self._minimized.get(entry.terminalId);
-        if (!conn) return;
-        self._removeFromMinimized(entry.terminalId);
-        self.assignTerminal(self._cells[entry.cellIndex], entry.terminalId, conn);
+        if (entry.folderCell) {
+          self.assignFolder(self._cells[entry.cellIndex], entry.folderCell);
+        } else {
+          var conn = self._minimized.get(entry.terminalId);
+          if (!conn) return;
+          self._removeFromMinimized(entry.terminalId);
+          self.assignTerminal(self._cells[entry.cellIndex], entry.terminalId, conn);
+        }
       });
     } else {
       // --- Slow path: terminal was supersized from minimized or is missing ---
@@ -808,10 +1389,14 @@
 
       saved.assignments.forEach(function (entry) {
         if (entry.cellIndex >= self._cells.length) return;
-        var conn = self._minimized.get(entry.terminalId);
-        if (!conn) return;
-        self._removeFromMinimized(entry.terminalId);
-        self.assignTerminal(self._cells[entry.cellIndex], entry.terminalId, conn);
+        if (entry.folderCell) {
+          self.assignFolder(self._cells[entry.cellIndex], entry.folderCell);
+        } else {
+          var conn = self._minimized.get(entry.terminalId);
+          if (!conn) return;
+          self._removeFromMinimized(entry.terminalId);
+          self.assignTerminal(self._cells[entry.cellIndex], entry.terminalId, conn);
+        }
       });
     }
 
@@ -832,6 +1417,7 @@
     if (!this._supersizeState) return;
     this._supersizeState = null;
     this._supersizeTerminalId = null;
+    this._supersizeFolderCell = null;
     this._gridContainer.classList.remove('grid-container-supersized');
   };
 

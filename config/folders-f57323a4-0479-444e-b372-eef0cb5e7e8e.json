@@ -1,0 +1,29 @@
+{
+  "folders": [
+    {
+      "id": "47602767-8c58-44da-8cc8-139c1d98c0ae",
+      "name": "AiWorker",
+      "parentId": null,
+      "collapsed": false,
+      "headerBg": null,
+      "headerColor": "#2ed573",
+      "headerHighlight": "#34ace0",
+      "startCommand": "cd AiWorker"
+    },
+    {
+      "id": "de6b6621-8067-4e61-85cc-3a1b992433bd",
+      "name": "listdeck",
+      "parentId": null,
+      "collapsed": false,
+      "headerBg": null,
+      "headerColor": null,
+      "headerHighlight": null,
+      "startCommand": "cd listdeck"
+    }
+  ],
+  "sessionFolders": {
+    "622c0f7a-b210-4c4d-92be-33c036b30efe": "47602767-8c58-44da-8cc8-139c1d98c0ae",
+    "2928c811-b17e-40c1-a2a2-d006b28f52b6": "47602767-8c58-44da-8cc8-139c1d98c0ae",
+    "af3181d2-9b38-4341-9a4d-6e56deff8d0c": "de6b6621-8067-4e61-85cc-3a1b992433bd"
+  }
+}

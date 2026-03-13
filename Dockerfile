@@ -20,8 +20,9 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# Install opencode
-RUN curl -fsSL https://opencode.ai/install | bash
+# Install opencode to system-wide location
+RUN curl -fsSL https://opencode.ai/install | bash \
+    && mv /root/.opencode/bin/opencode /usr/local/bin/opencode
 
 # Create app directory
 WORKDIR /app

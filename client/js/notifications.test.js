@@ -48,10 +48,10 @@ describe('Notifications — Frontend', function () {
     global.WebSocket = MockWebSocket;
 
     global.fetch = sinon.stub().callsFake(function (url) {
-      if (url === '/api/config') {
+      if (url === '/api/config' || url.startsWith('/api/config?')) {
         return Promise.resolve({ json: () => Promise.resolve(testConfig) });
       }
-      if (url === '/api/sessions') {
+      if (url.startsWith('/api/sessions')) {
         return Promise.resolve({ json: () => Promise.resolve(testSessions) });
       }
       return Promise.resolve({ json: () => Promise.resolve({}) });

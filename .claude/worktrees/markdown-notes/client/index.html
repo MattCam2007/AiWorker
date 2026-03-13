@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TerminalDeck</title>
+  <link rel="stylesheet" href="vendor/xterm.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/easymde/dist/easymde.min.css">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <aside id="sidebar" class="sidebar hidden">
+    <div class="sidebar-header">
+      <span class="sidebar-title">TerminalDeck</span>
+      <button id="sidebar-close-btn" class="sidebar-close">&times;</button>
+    </div>
+    <div class="sidebar-sections">
+      <div class="sidebar-section">
+        <div class="section-header" data-section="terminals">
+          <span class="section-toggle">&#9660;</span>
+          <span class="section-title">Terminals</span>
+        </div>
+        <div id="terminal-list" class="section-content"></div>
+      </div>
+      <div class="sidebar-section">
+        <div class="section-header" data-section="files">
+          <span class="section-toggle">&#9660;</span>
+          <span class="section-title">Files</span>
+          <span class="section-header-spacer"></span>
+          <button id="file-tree-refresh-btn" class="ft-refresh-btn" title="Refresh file list">&#x21bb;</button>
+        </div>
+        <div id="file-tree" class="section-content"></div>
+      </div>
+    </div>
+  </aside>
+
+  <div id="sidebar-backdrop" class="sidebar-backdrop hidden"></div>
+
+  <div id="main-content">
+    <header id="header">
+      <button id="sidebar-toggle-btn" class="sidebar-toggle" title="Toggle file tree">
+        <span class="hamburger-icon"></span>
+      </button>
+      <span class="title">TerminalDeck</span>
+      <div id="grid-presets"></div>
+      <div class="spacer"></div>
+      <button id="add-terminal-btn">+</button>
+      <div id="connection-status" class="status-indicator"></div>
+    </header>
+
+    <main id="grid-container"></main>
+  </div>
+
+  <div id="ephemeral-dialog" class="hidden"></div>
+  <div id="ephemeral-backdrop" class="hidden"></div>
+
+  <!-- Mobile toolbar: sits above virtual keyboard -->
+  <div id="mobile-toolbar">
+    <button class="mobile-toolbar-btn" data-key="esc">esc</button>
+    <button class="mobile-toolbar-btn" data-key="tab">tab</button>
+    <button class="mobile-toolbar-btn" data-key="up">&#x2191;</button>
+    <button class="mobile-toolbar-btn" data-key="down">&#x2193;</button>
+    <button class="mobile-toolbar-btn" data-key="left">&#x2190;</button>
+    <button class="mobile-toolbar-btn" data-key="right">&#x2192;</button>
+    <button class="mobile-toolbar-btn" data-key="pipe">|</button>
+    <button class="mobile-toolbar-btn" data-key="dash">-</button>
+    <button class="mobile-toolbar-btn" data-key="tilde">~</button>
+    <button class="mobile-toolbar-btn" data-key="slash">/</button>
+    <button class="mobile-toolbar-btn" data-key="colon">:</button>
+    <button class="mobile-toolbar-btn" data-key="ctrl">ctrl</button>
+    <button class="mobile-toolbar-btn" data-key="pgup">pgup</button>
+    <button class="mobile-toolbar-btn" data-key="pgdn">pgdn</button>
+  </div>
+
+  <script src="vendor/xterm.js"></script>
+  <script src="vendor/xterm-addon-fit.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/easymde/dist/easymde.min.js"></script>
+  <script src="js/terminal.js"></script>
+  <script src="js/note-panel.js"></script>
+  <script src="js/layout.js"></script>
+  <script src="js/filetree.js"></script>
+  <script src="js/terminal-list.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

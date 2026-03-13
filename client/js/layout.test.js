@@ -508,4 +508,275 @@ describe('LayoutEngine', function () {
     var nativeInput = container.querySelector('.edit-color-native');
     expect(nativeInput).to.exist;
   });
+
+  // --- Folder Cell integration ---
+
+  function makeFolderCell(window, folderId, folderName, entries) {
+    var FolderCell = window.TerminalDeck.FolderCell;
+    return new FolderCell(folderId, folderName, entries);
+  }
+
+  it('assignFolder attaches active terminal and sets folderCell in cellMap', function () {
+    var grid = document.getElementById('grid-container');
+    var engine = new LayoutEngine(grid);
+
+    delete require.cache[require.resolve('./folder-cell')];
+    require('./folder-cell');
+
+    engine.setGrid('1x1');
+    var cell = grid.querySelector('.grid-cell');
+    var connA = makeConnection('a', 'A');
+    var connB = makeConnection('b', 'B');
+    var fc = makeFolderCell(window, 'f1', 'MyFolder', [
+      { id: 'a', name: 'A', connection: connA },
+      { id: 'b', name: 'B', connection: connB }
+    ]);
+
+    engine.assignFolder(cell, fc);
+
+    var info = engine._cellMap.get(cell);
+    expect(info.terminalId).to.equal('a');
+    expect(info.connection).to.equal(connA);
+    expect(info.folderCell).to.equal(fc);
+    expect(connA.attach.calledOnce).to.be.true;
+  });
+
+  it('assignFolder removes folder terminals from minimized', function () {
+    var grid = document.getElementById('grid-container');
+    var engine = new LayoutEngine(grid);
+
+    delete require.cache[require.resolve('./folder-cell')];
+    require('./folder-cell');
+
+    engine.setGrid('1x1');
+    var cell = grid.querySelector('.grid-cell');
+    var connA = makeConnection('a', 'A');
+    var connB = makeConnection('b', 'B');
+    engine._addToMinimized('a', connA);
+    engine._addToMinimized('b', connB);
+    expect(engine._minimized.size).to.equal(2);
+
+    var fc = makeFolderCell(window, 'f1', 'Folder', [
+      { id: 'a', name: 'A', connection: connA },
+      { id: 'b', name: 'B', connection: connB }
+    ]);
+    engine.assignFolder(cell, fc);
+
+    expect(engine._minimized.size).to.equal(0);
+  });
+
+  it('assignFolder renders header with folder name and tabs', function () {
+    var grid = document.getElementById('grid-container');
+    var engine = new LayoutEngine(grid);
+
+    delete require.cache[require.resolve('./folder-cell')];
+    require('./folder-cell');
+
+    engine.setGrid('1x1');
+    var cell = grid.querySelector('.grid-cell');
+    var connA = makeConnection('a', 'A');
+    var connB = makeConnection('b', 'B');
+    var fc = makeFolderCell(window, 'f1', 'MyFolder', [
+      { id: 'a', name: 'A', connection: connA },
+      { id: 'b', name: 'B', connection: connB }
+    ]);
+
+    engine.assignFolder(cell, fc);
+
+    var header = cell.querySelector('.cell-header');
+    expect(header.querySelector('.cell-header-folder-name')).to.exist;
+    expect(header.querySelector('.cell-header-folder-name').textContent).to.equal('MyFolder');
+    expect(header.querySelectorAll('.cell-header-tab').length).to.equal(2);
+  });
+
+  it('_switchFolderTab detaches old and attaches new connection', function () {
+    var grid = document.getElementById('grid-container');
+    var engine = new LayoutEngine(grid);
+
+    delete require.cache[require.resolve('./folder-cell')];
+    require('./folder-cell');
+
+    engine.setGrid('1x1');
+    var cell = grid.querySelector('.grid-cell');
+    var connA = makeConnection('a', 'A');
+    var connB = makeConnection('b', 'B');
+    var fc = makeFolderCell(window, 'f1', 'Folder', [
+      { id: 'a', name: 'A', connection: connA },
+      { id: 'b', name: 'B', connection: connB }
+    ]);
+    engine.assignFolder(cell, fc);
+    connA.attach.resetHistory();
+    connA.detach.resetHistory();
+
+    engine._switchFolderTab(cell, 'b');
+
+    expect(connA.detach.calledOnce).to.be.true;
+    expect(connB.attach.calledOnce).to.be.true;
+
+    var info = engine._cellMap.get(cell);
+    expect(info.terminalId).to.equal('b');
+    expect(info.connection).to.equal(connB);
+  });
+
+  it('_switchFolderTab with current active id is a no-op', function () {
+    var grid = document.getElementById('grid-container');
+    var engine = new LayoutEngine(grid);
+
+    delete require.cache[require.resolve('./folder-cell')];
+    require('./folder-cell');
+
+    engine.setGrid('1x1');
+    var cell = grid.querySelector('.grid-cell');
+    var connA = makeConnection('a', 'A');
+    var fc = makeFolderCell(window, 'f1', 'Folder', [
+      { id: 'a', name: 'A', connection: connA }
+    ]);
+    engine.assignFolder(cell, fc);
+    connA.detach.resetHistory();
+
+    engine._switchFolderTab(cell, 'a'); // already active
+
+    expect(connA.detach.called).to.be.false;
+  });
+
+  it('_switchFolderTab with invalid cell is a no-op', function () {
+    var grid = document.getElementById('grid-container');
+    var engine = new LayoutEngine(grid);
+
+    delete require.cache[require.resolve('./folder-cell')];
+    require('./folder-cell');
+
+    engine.setGrid('1x1');
+    var cell = grid.querySelector('.grid-cell');
+    // cell has no folderCell — should not throw
+    expect(function () {
+      engine._switchFolderTab(cell, 'x');
+    }).to.not.throw();
+  });
+
+  it('minimizeTerminal on active folder tab switches to next', function () {
+    var grid = document.getElementById('grid-container');
+    var engine = new LayoutEngine(grid);
+
+    delete require.cache[require.resolve('./folder-cell')];
+    require('./folder-cell');
+
+    engine.setGrid('1x1');
+    var cell = grid.querySelector('.grid-cell');
+    var connA = makeConnection('a', 'A');
+    var connB = makeConnection('b', 'B');
+    var fc = makeFolderCell(window, 'f1', 'Folder', [
+      { id: 'a', name: 'A', connection: connA },
+      { id: 'b', name: 'B', connection: connB }
+    ]);
+    engine.assignFolder(cell, fc);
+
+    engine.minimizeTerminal('a');
+
+    expect(connA.detach.called).to.be.true;
+    expect(engine._minimized.has('a')).to.be.true;
+    var info = engine._cellMap.get(cell);
+    expect(info.terminalId).to.equal('b');
+    expect(info.connection).to.equal(connB);
+  });
+
+  it('minimizeTerminal on last folder tab clears cell', function () {
+    var grid = document.getElementById('grid-container');
+    var engine = new LayoutEngine(grid);
+
+    delete require.cache[require.resolve('./folder-cell')];
+    require('./folder-cell');
+
+    engine.setGrid('1x1');
+    var cell = grid.querySelector('.grid-cell');
+    var connA = makeConnection('a', 'A');
+    var fc = makeFolderCell(window, 'f1', 'Folder', [
+      { id: 'a', name: 'A', connection: connA }
+    ]);
+    engine.assignFolder(cell, fc);
+
+    engine.minimizeTerminal('a');
+
+    expect(engine._minimized.has('a')).to.be.true;
+    expect(cell.classList.contains('cell-empty')).to.be.true;
+    var info = engine._cellMap.get(cell);
+    expect(info.terminalId).to.be.null;
+  });
+
+  it('_clearCell on folder cell moves all terminals to minimized', function () {
+    var grid = document.getElementById('grid-container');
+    var engine = new LayoutEngine(grid);
+
+    delete require.cache[require.resolve('./folder-cell')];
+    require('./folder-cell');
+
+    engine.setGrid('1x1');
+    var cell = grid.querySelector('.grid-cell');
+    var connA = makeConnection('a', 'A');
+    var connB = makeConnection('b', 'B');
+    var fc = makeFolderCell(window, 'f1', 'Folder', [
+      { id: 'a', name: 'A', connection: connA },
+      { id: 'b', name: 'B', connection: connB }
+    ]);
+    engine.assignFolder(cell, fc);
+
+    engine._clearCell(cell);
+
+    expect(engine._minimized.has('a')).to.be.true;
+    expect(engine._minimized.has('b')).to.be.true;
+    expect(cell.classList.contains('cell-empty')).to.be.true;
+    var info = engine._cellMap.get(cell);
+    expect(info.folderCell).to.be.null;
+  });
+
+  it('grid resize preserves folder cell at stable position', function () {
+    var grid = document.getElementById('grid-container');
+    var engine = new LayoutEngine(grid);
+
+    delete require.cache[require.resolve('./folder-cell')];
+    require('./folder-cell');
+
+    engine.setGrid('2x1');
+    var cells = grid.querySelectorAll('.grid-cell');
+    var connA = makeConnection('a', 'A');
+    var connB = makeConnection('b', 'B');
+    var fc = makeFolderCell(window, 'f1', 'Folder', [
+      { id: 'a', name: 'A', connection: connA },
+      { id: 'b', name: 'B', connection: connB }
+    ]);
+    engine.assignFolder(cells[0], fc);
+
+    // Grow to 2x2 — cell 0 is preserved
+    engine.setGrid('2x2');
+
+    var info = engine._cellMap.get(engine._cells[0]);
+    expect(info.folderCell).to.equal(fc);
+    expect(info.terminalId).to.equal('a');
+  });
+
+  it('refitAll works with folder cell (refits active connection)', function () {
+    var grid = document.getElementById('grid-container');
+    var engine = new LayoutEngine(grid);
+
+    delete require.cache[require.resolve('./folder-cell')];
+    require('./folder-cell');
+
+    engine.setGrid('1x1');
+    var cell = grid.querySelector('.grid-cell');
+    var connA = makeConnection('a', 'A');
+    var connB = makeConnection('b', 'B');
+    var fc = makeFolderCell(window, 'f1', 'Folder', [
+      { id: 'a', name: 'A', connection: connA },
+      { id: 'b', name: 'B', connection: connB }
+    ]);
+    engine.assignFolder(cell, fc);
+    connA.refit.resetHistory();
+    connB.refit.resetHistory();
+
+    engine.refitAll();
+
+    // Only the active (A) should be refit via the cellMap entry
+    expect(connA.refit.called).to.be.true;
+    expect(connB.refit.called).to.be.false;
+  });
 });
