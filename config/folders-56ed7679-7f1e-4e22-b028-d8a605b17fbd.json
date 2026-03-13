@@ -1,0 +1,30 @@
+{
+  "folders": [
+    {
+      "id": "b234d6eb-bfa9-479e-acea-15eee5153dca",
+      "name": "grocery",
+      "parentId": null,
+      "collapsed": false,
+      "headerBg": null,
+      "headerColor": "#33d9b2",
+      "headerHighlight": "#34ace0",
+      "startCommand": "cd grocery-optimization"
+    },
+    {
+      "id": "f0c98f98-28cc-448a-a67b-a7967b1e4d46",
+      "name": "AiWorker",
+      "parentId": null,
+      "collapsed": false,
+      "headerBg": null,
+      "headerColor": null,
+      "headerHighlight": null,
+      "startCommand": null
+    }
+  ],
+  "sessionFolders": {
+    "13d3dd42-bb3c-449a-bd96-11d9ddf1d306": "b234d6eb-bfa9-479e-acea-15eee5153dca",
+    "5b6aad9e-ca3b-4836-a65e-3207502cec0a": "b234d6eb-bfa9-479e-acea-15eee5153dca",
+    "6907155d-4fc7-4329-a5cd-fd075e5fe75d": "f0c98f98-28cc-448a-a67b-a7967b1e4d46",
+    "31453e8b-2218-410e-8280-671c3dee5436": "f0c98f98-28cc-448a-a67b-a7967b1e4d46"
+  }
+}

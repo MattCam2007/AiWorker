@@ -88,7 +88,10 @@
       "Bash(curl -s http://localhost:3001/js/folder-cell.js | grep -n \"cell-header-more\\\\|cell-header-edit\\\\|cell-header-refresh\\\\|moreBtn\\\\|editBtn\\\\|refreshBtn\")",
       "Bash(curl -s http://localhost:3001/css/style.css | grep -n \"cell-header-more\\\\|cell-header-edit\" | head -20)",
       "Bash(curl -s http://localhost:3001/js/app.js | grep -n \"_onEditFolder\\\\|_showFolderSettingsDialog\\\\|startCommand\" | head -20)",
-      "Bash(curl -s http://localhost:3001/ | grep -c \"terminaldeck\\\\|TerminalDeck\" && curl -s http://localhost:3001/js/layout.js | grep -c \"_showFolderMoreMenu\")"
+      "Bash(curl -s http://localhost:3001/ | grep -c \"terminaldeck\\\\|TerminalDeck\" && curl -s http://localhost:3001/js/layout.js | grep -c \"_showFolderMoreMenu\")",
+      "Bash(ssh -T git@github.com 2>&1 || true)",
+      "Bash(echo \"SSH_AUTH_SOCK=$SSH_AUTH_SOCK\")",
+      "Bash(which ssh:*)"
     ]
   }
 }

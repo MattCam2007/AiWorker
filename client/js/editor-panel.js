@@ -253,7 +253,46 @@
 
   EditorPanel.prototype.isDirty = function () { return this._dirty; };
   EditorPanel.prototype.isActive = function () { return !!this._cmView; };
-  EditorPanel.prototype.refresh = function () {};
+  EditorPanel.prototype.refresh = function () {
+    if (!this._cmView || this._destroyed) return;
+
+    var self = this;
+
+    if (this._dirty) {
+      if (!confirm('You have unsaved changes. Reload from disk and discard changes?')) {
+        return;
+      }
+    }
+
+    this._updateStatus('Reloading...');
+
+    fetch('/api/notes/' + encodeURIComponent(this.id))
+      .then(function (res) {
+        if (!res.ok) throw new Error('Failed to load file');
+        return res.json();
+      })
+      .then(function (data) {
+        if (self._destroyed || !self._cmView) return;
+
+        var content = data.content || '';
+
+        self._cmView.dispatch({
+          changes: { from: 0, to: self._cmView.state.doc.length, insert: content }
+        });
+
+        self._lastSavedContent = content;
+        self._dirty = false;
+        self._initialLoad = false;
+        self._updateStatus('Reloaded');
+
+        if (self._onDirtyChange) self._onDirtyChange(false);
+        self._updatePreview();
+      })
+      .catch(function (err) {
+        console.error('[editor-panel] refresh failed:', err);
+        self._updateStatus('Reload failed');
+      });
+  };
   EditorPanel.prototype.resize = function () {};
   EditorPanel.prototype.refit = function () {
     if (this._cmView) this._cmView.requestMeasure();

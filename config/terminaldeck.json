@@ -97,6 +97,11 @@
       "id": "app",
       "name": "app.py",
       "file": "/workspace/listdeck/app.py"
+    },
+    {
+      "id": "codebase-manual",
+      "name": "CODEBASE_MANUAL.md",
+      "file": "/workspace/grocery-optimizer/CODEBASE_MANUAL.md"
     }
   ],
   "listdeck": {
