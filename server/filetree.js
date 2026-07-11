@@ -36,9 +36,6 @@ async function listDirectory(dirPath) {
 
   const results = [];
   for (const entry of entries) {
-    // Skip hidden files (dotfiles)
-    if (entry.name.startsWith('.')) continue;
-
     results.push({
       name: entry.name,
       path: path.relative(WORKSPACE_ROOT, path.join(resolved, entry.name)),
